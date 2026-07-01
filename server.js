@@ -713,7 +713,7 @@ app.use(cors({
     return cb(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
 }));
 
 // Capture the raw body ONLY for the webhook route (needed for exact-byte HMAC).
@@ -1090,6 +1090,18 @@ app.post('/api/products', requireAdmin, async (req, res) => {
     );
     res.json({ ok: true, id });
   } catch (e) { console.error('save product:', e.message); res.status(500).json({ error: 'Could not save product' }); }
+});
+
+// Delete a product (admin only). Same-origin DELETE passes the CSRF guard because
+// the browser sends an allowlisted Origin header on same-origin state-changing calls.
+app.delete('/api/products/:id', requireAdmin, async (req, res) => {
+  const id = String(req.params.id || '').trim().slice(0, 60);
+  if (!id) return res.status(400).json({ error: 'Product id required' });
+  if (!pool) return res.json({ ok: true, note: 'Demo mode: connect a database to persist deletions.' });
+  try {
+    await pool.query('DELETE FROM products WHERE id = $1', [id]);
+    res.json({ ok: true, id });
+  } catch (e) { console.error('delete product:', e.message); res.status(500).json({ error: 'Could not delete product' }); }
 });
 
 // ---- Admin auth ----
