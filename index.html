@@ -61,6 +61,15 @@
         const r = await fetch(TC_CONFIG.backendUrl + "/api/config", { credentials:"include" });
         if (r.ok){ const d = await r.json(); Object.assign(SERVER_CFG, d); }
       } catch(e){ /* keep safe defaults */ }
+      // Owner-uploaded photos (hero/banner/category) saved on the server —
+      // paint them live so every visitor sees the latest, no redeploy needed.
+      try {
+        const r2 = await fetch(TC_CONFIG.backendUrl + "/api/site-settings", { credentials:"include" });
+        if (r2.ok){
+          const { settings } = await r2.json();
+          if (settings && typeof settings === "object" && window.__applySiteSettings) window.__applySiteSettings(settings);
+        }
+      } catch(e){}
     }
   </script>
 
@@ -1280,6 +1289,19 @@
     $("#instaPill").href = ig; $("#footInsta").href = ig;
     animateStats();
   }
+
+  /* Merge server-saved photos (hero/banner/category) into the live storefront.
+     Called from loadServerConfig() at boot so every visitor sees the owner's
+     uploaded photos without any file download or redeploy. */
+  window.__applySiteSettings = function(settings){
+    const s = S();
+    if (settings.heroImg){ s.heroImg = settings.heroImg; const h=$("#heroImg"); if(h) h.src = settings.heroImg; }
+    if (settings.bannerImg){ s.bannerImg = settings.bannerImg; const b=$("#bannerImg"); if(b) b.src = settings.bannerImg; }
+    if (Array.isArray(s.cats)){
+      s.cats.forEach((c,i)=>{ if (settings["cat"+i+"Img"]) c.img = settings["cat"+i+"Img"]; });
+      if (typeof renderCats === "function") renderCats();
+    }
+  };
 
   function animateStats(){
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -2861,7 +2883,16 @@
     if (up){
       const card = up.closest("[data-pid]");
       const p = DATA.products.find(x=>x.id===card.dataset.pid); if(!p) return;
-      return pickImage(dataUrl=>{ p.img = dataUrl; card.querySelector(".ad-thumb img").src = dataUrl; card.querySelector('[data-f="img"]').value = ""; renderGrids(); refreshWishUI(); toast("📷 Photo updated"); });
+      return pickImage(async (url, isLive)=>{
+        p.img = url; card.querySelector(".ad-thumb img").src = url; card.querySelector('[data-f="img"]').value = ""; renderGrids(); refreshWishUI();
+        if (isLive){
+          // Save this product immediately so its new photo URL sticks on the server.
+          try {
+            await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
+              body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", image:url }) });
+          } catch(e){}
+        }
+      });
     }
     const del = e.target.closest("[data-act='del']");
     if (del){
@@ -2875,16 +2906,30 @@
     const sup = e.target.closest("[data-supimg]");
     if (sup){
       const k = sup.dataset.supimg;
-      return pickImage(dataUrl=>{ S()[k] = dataUrl; const th=$('[data-thumb="'+k+'"]'); if(th) th.src=dataUrl; applySettings(); toast("📷 Photo updated"); });
+      return pickImage(async (url, isLive)=>{
+        S()[k] = url; const th=$('[data-thumb="'+k+'"]'); if(th) th.src=url; applySettings();
+        if (isLive){
+          try { await fetch(TC_CONFIG.backendUrl + "/api/site-settings", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify({ [k]: url }) }); }
+          catch(e){}
+        }
+      });
     }
     const cup = e.target.closest("[data-cupimg]");
     if (cup){
       const i = +cup.dataset.cupimg;
-      return pickImage(dataUrl=>{ S().cats[i].img = dataUrl; const th=$('[data-cthumb="'+i+'"]'); if(th) th.src=dataUrl; renderCats(); toast("📷 Photo updated"); });
+      return pickImage(async (url, isLive)=>{
+        S().cats[i].img = url; const th=$('[data-cthumb="'+i+'"]'); if(th) th.src=url; renderCats();
+        if (isLive){
+          try { await fetch(TC_CONFIG.backendUrl + "/api/site-settings", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify({ ["cat"+i+"Img"]: url }) }); }
+          catch(e){}
+        }
+      });
     }
   });
 
-  /* photo picker — koi bhi image chalegi (JPG/PNG/WEBP/HEIC-preview…), auto-resize hoti hai */
+  /* photo picker — koi bhi image chalegi, auto-resize hoti hai, phir SERVER
+     par upload hoti hai taaki turant sabko live dikhe (owner ko download/
+     redeploy nahi karna padta). Server na ho to local preview dikhta hai. */
   function pickImage(cb){
     const inp = document.createElement("input");
     inp.type = "file"; inp.accept = "image/*";
@@ -2892,15 +2937,32 @@
       const f = inp.files && inp.files[0]; if(!f) return;
       const url = URL.createObjectURL(f);
       const img = new Image();
-      img.onload = ()=>{
-        const MAX = 1000, sc = Math.min(1, MAX/Math.max(img.width, img.height));
+      img.onload = async ()=>{
+        const MAX = 1200, sc = Math.min(1, MAX/Math.max(img.width, img.height));
         const c = document.createElement("canvas");
         c.width = Math.max(1, Math.round(img.width*sc)); c.height = Math.max(1, Math.round(img.height*sc));
         c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
         URL.revokeObjectURL(url);
-        try { cb(c.toDataURL("image/jpeg", 0.82)); } catch(e){ toast("Photo could not be processed — try using a URL instead"); }
+        let dataUrl;
+        try { dataUrl = c.toDataURL("image/jpeg", 0.82); }
+        catch(e){ toast("Photo could not be processed — try another one"); return; }
+        // Upload to the server so it's live for everyone, right now.
+        if (TC_CONFIG.apiEnabled && ADMIN && ADMIN.authed){
+          toast("⏳ Uploading photo…");
+          try {
+            const r = await fetch(TC_CONFIG.backendUrl + "/api/upload", {
+              method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
+              body: JSON.stringify({ dataUrl })
+            });
+            const d = await r.json().catch(()=>({}));
+            if (r.ok && d.url){ cb(d.url, true); toast("✅ Photo uploaded — live now!"); return; }
+            toast(d.error || "Upload failed — saved on this device only");
+          } catch(e){ toast("Could not reach server — saved on this device only"); }
+        }
+        // Fallback: local preview only (owner sees it, but not live for others)
+        cb(dataUrl, false);
       };
-      img.onerror = ()=>{ URL.revokeObjectURL(url); toast("This photo could not load — try another one or use a URL"); };
+      img.onerror = ()=>{ URL.revokeObjectURL(url); toast("This photo could not load — try another one"); };
       img.src = url;
     };
     inp.click();

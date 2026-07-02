@@ -542,6 +542,20 @@ CREATE TABLE IF NOT EXISTS products (
   image_url TEXT, in_stock BOOLEAN NOT NULL DEFAULT TRUE, is_wholesale BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+-- Uploaded photos live here (base64 data URLs are too big for products.image_url).
+-- Each row is one image; it's served back at /api/img/:key so the storefront
+-- only ever stores a short URL, never the megabytes of image data.
+CREATE TABLE IF NOT EXISTS site_images (
+  key TEXT PRIMARY KEY,
+  mime TEXT NOT NULL DEFAULT 'image/jpeg',
+  data TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+-- Owner-editable site settings (hero image, banner image, category images…)
+-- as a single JSON blob so the storefront reads them live from the server.
+CREATE TABLE IF NOT EXISTS site_settings (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS customers (
   id BIGSERIAL PRIMARY KEY, name TEXT, email TEXT, phone TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS orders (
@@ -1365,10 +1379,78 @@ app.post('/api/products', requireAdmin, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8`,
       [id, name, category, price, Number.isFinite(Number(b.originalPrice)) ? Number(b.originalPrice) : null,
-       b.image ? String(b.image).slice(0, 500) : null, b.inStock !== false, String(b.description || '').slice(0, 2000)]
+       b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000)]
     );
     res.json({ ok: true, id });
   } catch (e) { console.error('save product:', e.message); res.status(500).json({ error: 'Could not save product' }); }
+});
+
+/* ===========================================================================
+   PHOTO UPLOAD — laptop se photo → server pe save → turant live (sabko)
+   The admin panel POSTs a compressed data URL here. We store the bytes in
+   site_images and hand back a SHORT url (/api/img/:key) that fits anywhere a
+   normal image URL would. No file download / redeploy needed ever again.
+=========================================================================== */
+const MAX_IMG_BYTES = 3 * 1024 * 1024; // ~3 MB after client-side compression
+
+app.post('/api/upload', requireAdmin, express.json({ limit: '6mb' }), async (req, res) => {
+  try {
+    const dataUrl = String((req.body && req.body.dataUrl) || '');
+    const m = dataUrl.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) return res.status(400).json({ error: 'Please choose a valid image (JPG, PNG, WEBP).' });
+    const mime = m[1];
+    const b64 = m[2];
+    const bytes = Math.floor(b64.length * 3 / 4);
+    if (bytes > MAX_IMG_BYTES) return res.status(413).json({ error: 'Image is too large — please use a smaller photo.' });
+    if (!pool) return res.status(503).json({ error: 'Photo upload needs the database (not available in demo mode).' });
+    const key = 'img_' + Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
+    await pool.query('INSERT INTO site_images (key, mime, data) VALUES ($1,$2,$3)', [key, mime, b64]);
+    res.json({ ok: true, url: '/api/img/' + key });
+  } catch (e) { console.error('upload:', e.message); res.status(500).json({ error: 'Upload failed — please try again.' }); }
+});
+
+// Serve an uploaded image. Cached hard (the key is unique per upload, so the
+// URL changes whenever the photo changes — safe to cache forever).
+app.get('/api/img/:key', async (req, res) => {
+  try {
+    if (!pool) return res.status(404).end();
+    const key = String(req.params.key || '').slice(0, 80);
+    const { rows } = await pool.query('SELECT mime, data FROM site_images WHERE key=$1', [key]);
+    if (!rows.length) return res.status(404).end();
+    const buf = Buffer.from(rows[0].data, 'base64');
+    res.set('Content-Type', rows[0].mime);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(buf);
+  } catch (e) { res.status(500).end(); }
+});
+
+// Read site settings (hero/banner/category image URLs, etc.). Public so the
+// storefront can paint the latest photos live on load.
+app.get('/api/site-settings', async (_req, res) => {
+  try {
+    if (!pool) return res.json({ settings: {} });
+    const { rows } = await pool.query('SELECT data FROM site_settings WHERE id=1');
+    res.json({ settings: (rows[0] && rows[0].data) || {} });
+  } catch (e) { res.json({ settings: {} }); }
+});
+
+// Save site settings (owner only). Merges the posted keys into the stored blob.
+app.post('/api/site-settings', requireAdmin, async (req, res) => {
+  try {
+    if (!pool) return res.status(503).json({ error: 'Settings need the database (not available in demo mode).' });
+    const patch = (req.body && typeof req.body === 'object') ? req.body : {};
+    // Whitelist: only known image-ish keys, each a short string (URL).
+    const clean = {};
+    for (const k of ['heroImg', 'bannerImg', 'cat0Img', 'cat1Img', 'cat2Img', 'cat3Img', 'cat4Img', 'cat5Img']) {
+      if (typeof patch[k] === 'string' && patch[k].length <= 400) clean[k] = patch[k];
+    }
+    await pool.query(
+      `INSERT INTO site_settings (id, data, updated_at) VALUES (1, $1::jsonb, now())
+       ON CONFLICT (id) DO UPDATE SET data = site_settings.data || $1::jsonb, updated_at = now()`,
+      [JSON.stringify(clean)]);
+    const { rows } = await pool.query('SELECT data FROM site_settings WHERE id=1');
+    res.json({ ok: true, settings: (rows[0] && rows[0].data) || {} });
+  } catch (e) { console.error('site-settings:', e.message); res.status(500).json({ error: 'Could not save settings' }); }
 });
 
 // ---- Admin auth ----
@@ -1376,7 +1458,7 @@ app.post('/api/products', requireAdmin, async (req, res) => {
 // attacker rotating User-Agents/cookies against the single admin password is
 // still throttled per source IP. A single attacker can no longer DoS the real
 // admin out of their own panel by spamming wrong passwords from a different IP.
-// We also keep a global counter as a backstop for distributed attacks.
+// (The old global counter was removed — it was itself a DoS vector.)
 const adminIpFails = new Map(); // ip -> { fails, lockedUntil }
 const MAX_PW_LEN = 200; // bcrypt only uses the first 72 bytes; cap to avoid CPU-DoS via huge inputs.
 
