@@ -344,6 +344,22 @@ ${items || '—'}
 💖 Thank you for choosing Tish Creations!`;
 }
 
+/* Send an arbitrary WhatsApp text via the Cloud API. Returns true on success,
+   false if not configured or the call fails (caller can fall back to email). */
+async function sendWhatsAppText(phone, message) {
+  const num = String(phone || '').replace(/[^\d]/g, '');
+  if (!num || !WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID || num.length < 10) return false;
+  const fullNum = num.length === 10 ? `91${num}` : num;
+  try {
+    const r = await axios.post(
+      `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`,
+      { messaging_product: 'whatsapp', to: fullNum, type: 'text', text: { body: message } },
+      { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' }, timeout: 8000 }
+    );
+    return r.status >= 200 && r.status < 300;
+  } catch (e) { console.error('WhatsApp text send failed:', e.message); return false; }
+}
+
 /* Send a NEW ORDER notification to the store owner's WhatsApp.
    This fires every time a customer places an order, so the owner can:
      - Verify UPI payment (if UPI mode)
@@ -669,6 +685,20 @@ CREATE TABLE IF NOT EXISTS newsletter_subscribers (
   id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   source TEXT);
+-- Abandoned carts: snapshot of a shopper's cart + contact, so we can send a
+-- gentle reminder if no order follows within a few hours.
+CREATE TABLE IF NOT EXISTS abandoned_carts (
+  id BIGSERIAL PRIMARY KEY,
+  contact_key TEXT NOT NULL UNIQUE,   -- normalised email or phone (dedupe key)
+  email TEXT,
+  phone TEXT,
+  name TEXT,
+  items JSONB NOT NULL DEFAULT '[]',
+  subtotal NUMERIC(10,2) NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reminded_at TIMESTAMPTZ,            -- set once we've nudged them
+  converted BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE INDEX IF NOT EXISTS idx_abandoned_pending ON abandoned_carts(updated_at) WHERE reminded_at IS NULL AND converted = FALSE;
 `;
 
 async function initDb() {
@@ -1083,6 +1113,29 @@ async function saveCustomerOtp(customer, otpHash, expiresAt) {
   await pool.query(
     'UPDATE customers SET email_otp_hash=$2, email_otp_expires_at=$3, email_otp_attempts=0, email_otp_sent_at=now() WHERE id=$1',
     [customer.id, otpHash, expiresAt]);
+}
+
+async function sendPasswordResetEmail(email, name, resetLink) {
+  const mailer = getMailer();
+  if (!mailer) return false;
+  const first = String(name || '').split(' ')[0] || 'there';
+  try {
+    await mailer.sendMail({
+      from: MAIL_FROM, to: email,
+      subject: 'Reset your Tish Creations password',
+      text: `Hi ${first},\n\nWe received a request to reset your Tish Creations password.\n\nClick this link to set a new password (expires in 1 hour):\n${resetLink}\n\nIf you didn't request this, you can safely ignore this email.\n\n— Tish Creations`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #eee;border-radius:12px">
+        <h2 style="color:#7b3f61;margin:0 0 6px">Tish Creations ✨</h2>
+        <p style="color:#444">Hi ${first}, we received a request to reset your password.</p>
+        <div style="text-align:center;margin:20px 0">
+          <a href="${resetLink}" style="display:inline-block;background:#7b3f61;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Reset Password</a>
+        </div>
+        <p style="color:#888;font-size:13px">Or copy this link: <br><a href="${resetLink}" style="color:#7b3f61;word-break:break-all">${resetLink}</a></p>
+        <p style="color:#888;font-size:13px">This link expires in <strong>1 hour</strong>. If you didn't request a reset, you can safely ignore this email.</p>
+      </div>`,
+    });
+    return true;
+  } catch (e) { console.error('pw reset email:', e.message); return false; }
 }
 
 async function sendOtpEmail(email, name, otp) {
@@ -2226,25 +2279,26 @@ app.post('/api/customer/google', authLimiter, async (req, res) => {
 });
 
 // ---- Orders ----
-// SECURITY / BUSINESS RULE: ordering now REQUIRES a signed-in, email-verified
-// account. Guest checkout is gone — every order is tied to a customer_id, so
-// customers always see their orders in "My Orders" and the store always knows
-// who bought what. This is enforced server-side; the storefront's login gate
-// is just UX on top of it.
-app.post('/api/orders', orderLimiter, requireCustomer, async (req, res) => {
+// Guest checkout is allowed: if the customer is signed in, the order is tied
+// to their customer_id (and shows in "My Orders"). If not, a guest_token is
+// generated so they can still track the order via the link we return.
+app.post('/api/orders', orderLimiter, async (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, MAX_ITEMS) : [];
   if (!items.length) return res.status(400).json({ error: 'Cart is empty' });
-  // Verified-email guard (defense in depth — unverified accounts can't sign in
-  // in the first place, but an old session could pre-date verification).
-  try {
-    const acct = await findCustomerById(req.session.customerId);
-    if (!acct) return res.status(401).json({ error: 'Please sign in to place your order.' });
-    if (EMAIL_VERIFICATION_ON && acct.email_verified === false)
-      return res.status(403).json({ error: 'Please verify your email before placing an order.', needsVerification: true, email: acct.email });
-    // If the checkout form omitted an email, fall back to the account email so
-    // every order has a reachable address for confirmations.
-    if (req.body?.customer && !req.body.customer.email) req.body.customer.email = acct.email || '';
-  } catch (e) { console.error('order acct check:', e.message); }
+  // If signed in, verify email (defense in depth) and fall back to account email.
+  if (req.session?.customerId) {
+    try {
+      const acct = await findCustomerById(req.session.customerId);
+      if (acct && EMAIL_VERIFICATION_ON && acct.email_verified === false)
+        return res.status(403).json({ error: 'Please verify your email before placing an order.', needsVerification: true, email: acct.email });
+      if (req.body?.customer && !req.body.customer.email && acct) req.body.customer.email = acct.email || '';
+    } catch (e) { console.error('order acct check:', e.message); }
+  } else {
+    // Guest: require name, email, and phone so the store can contact them.
+    const gc = req.body?.customer || {};
+    if (!gc.name || !gc.email || !gc.phone)
+      return res.status(400).json({ error: 'Name, email, and phone are required for guest checkout.' });
+  }
   // Payment policy: Cash on Delivery is disabled by default (ALLOW_COD=false) —
   // every order must be paid online (Razorpay or UPI QR). A direct API call
   // with paymentMode:'cod' is rejected here, not just hidden in the UI.
@@ -2429,6 +2483,8 @@ app.post('/api/orders', orderLimiter, requireCustomer, async (req, res) => {
     if (paymentMode !== 'prepaid' || isUpi) {
       sendOwnerOrderNotification(order).catch(e => console.error('owner notify bg:', e.message));
     }
+    // They ordered — clear any pending abandoned-cart reminder for this contact.
+    markCartConverted(custEmail || c.email, c.phone).catch(() => {});
     res.json({
       ok: true, orderId: order.id, status: order.status, total: order.total,
       guestToken, couponError,
@@ -2639,6 +2695,91 @@ app.post('/api/newsletter/subscribe', orderLimiter, async (req, res) => {
   } catch (e) { console.error('newsletter:', e.message); res.status(500).json({ error: 'Could not subscribe' }); }
 });
 
+// ---- Abandoned cart capture + reminder ----
+// The storefront calls this (debounced) whenever a shopper has items in the cart
+// AND we know how to reach them (email/phone from the checkout form or account).
+// A background job later nudges anyone who didn't complete an order.
+app.post('/api/cart/save', orderLimiter, async (req, res) => {
+  const b = req.body || {};
+  const email = emailKey(b.email || '');
+  const phone = String(b.phone || '').replace(/[^\d]/g, '').slice(0, 15);
+  const contactKey = email || (phone ? 'p:' + phone : '');
+  if (!contactKey) return res.status(400).json({ error: 'email or phone required' });
+  const items = Array.isArray(b.items) ? b.items.slice(0, 100).map(it => ({
+    id: String(it.id || '').slice(0, 60), name: String(it.name || '').slice(0, 140),
+    qty: Math.max(1, Math.min(999, parseInt(it.qty, 10) || 1)), price: Number(it.price) || 0,
+  })) : [];
+  if (!items.length) return res.json({ ok: true, note: 'empty cart — nothing saved' });
+  const subtotal = Number(b.subtotal) || items.reduce((s, it) => s + it.price * it.qty, 0);
+  if (!pool) return res.json({ ok: true, note: 'Demo mode — not persisted.' });
+  try {
+    await pool.query(
+      `INSERT INTO abandoned_carts (contact_key, email, phone, name, items, subtotal, updated_at, reminded_at, converted)
+       VALUES ($1,$2,$3,$4,$5,$6, now(), NULL, FALSE)
+       ON CONFLICT (contact_key) DO UPDATE SET email=$2, phone=$3, name=$4, items=$5, subtotal=$6,
+         updated_at=now(), reminded_at=NULL, converted=FALSE`,
+      [contactKey, email || null, phone || null, String(b.name || '').slice(0, 80),
+       JSON.stringify(items), subtotal]
+    );
+    res.json({ ok: true });
+  } catch (e) { console.error('cart save:', e.message); res.status(500).json({ error: 'Could not save cart' }); }
+});
+
+// Mark a shopper's cart as converted so they don't get a reminder after ordering.
+async function markCartConverted(email, phone) {
+  if (!pool) return;
+  const key = emailKey(email || '') || (phone ? 'p:' + String(phone).replace(/[^\d]/g, '') : '');
+  if (!key) return;
+  try { await pool.query('UPDATE abandoned_carts SET converted=TRUE WHERE contact_key=$1', [key]); }
+  catch (e) { console.error('mark cart converted:', e.message); }
+}
+
+// Background job: nudge carts left untouched for ABANDON_AFTER_MIN..24h that
+// haven't been reminded and didn't convert. Runs every 15 min. Sends WhatsApp
+// (if configured) else email; falls back silently if neither is set up.
+const ABANDON_AFTER_MIN = parseInt(process.env.ABANDON_AFTER_MIN || '60', 10); // wait 1h by default
+async function runAbandonedCartReminders() {
+  if (!pool) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM abandoned_carts
+        WHERE reminded_at IS NULL AND converted = FALSE
+          AND updated_at < now() - ($1 || ' minutes')::interval
+          AND updated_at > now() - interval '24 hours'
+        LIMIT 50`, [ABANDON_AFTER_MIN]);
+    for (const c of rows) {
+      const origin = STOREFRONT_URL || (allowlist[0] || 'https://www.tishcreations.in');
+      const first = String(c.name || '').split(' ')[0] || 'there';
+      const itemLine = (Array.isArray(c.items) ? c.items : []).slice(0, 3).map(it => `• ${it.name} × ${it.qty}`).join('\n');
+      const msg = `🌸 Hi ${first}! You left some pretty things in your Tish Creations bag:\n\n${itemLine}\n\nThey're waiting for you 💖 Complete your order here: ${origin}\n\nQuestions? Just reply — we're happy to help!`;
+      let sent = false;
+      if (c.phone) sent = await sendWhatsAppText(c.phone, msg);
+      if (!sent && c.email) {
+        const mailer = getMailer();
+        if (mailer) {
+          try {
+            await mailer.sendMail({
+              from: MAIL_FROM, to: c.email,
+              subject: 'You left something sparkly behind ✨',
+              text: msg,
+              html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;color:#3a2a1a">
+                <h2 style="color:#C6A35B">Still thinking it over? 💭</h2>
+                <p>Hi ${escapeHtml(first)}, you left these in your Tish Creations bag:</p>
+                <ul>${(Array.isArray(c.items) ? c.items : []).slice(0, 6).map(it => `<li>${escapeHtml(String(it.name))} × ${it.qty}</li>`).join('')}</ul>
+                <p><a href="${origin}" style="display:inline-block;background:#1e140a;color:#f0d9a8;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Complete my order →</a></p>
+                <p style="color:#8a7a68;font-size:13px">Questions? Just reply to this email — we're happy to help. 🌸</p>
+              </div>`,
+            });
+            sent = true;
+          } catch (e) { console.error('abandoned email:', e.message); }
+        }
+      }
+      await pool.query('UPDATE abandoned_carts SET reminded_at=now() WHERE id=$1', [c.id]);
+      if (sent) console.log(`🛒 Abandoned-cart reminder sent to ${c.email || c.phone}`);
+    }
+  } catch (e) { console.error('abandoned cart job:', e.message); }
+}
+
 // ---- Password reset (request + confirm) ----
 // NOTE: email sending is stubbed. If SMTP_URL is configured we log the link; the
 // host should pipe that into their email provider. Without SMTP_URL we still
@@ -2660,11 +2801,10 @@ app.post('/api/customer/password-reset/request', authLimiter, async (req, res) =
       'INSERT INTO password_resets (customer_id, token_hash, expires_at) VALUES ($1, $2, now() + interval \'1 hour\')',
       [c.id, tokenHash]
     );
-    // Best-effort: log the link. In production, wire SMTP_URL to actually send.
     const origin = STOREFRONT_URL || (allowlist[0] || '');
     const link = `${origin}/#reset?token=${token}&email=${encodeURIComponent(email)}`;
-    if (SMTP_URL) console.log(`📧 Password reset email queued for ${email}: ${link}`);
-    else console.log(`📧 (no SMTP configured) Password reset link for ${email}: ${link}`);
+    const sent = await sendPasswordResetEmail(email, c.name, link);
+    if (!sent) console.log(`📧 (email not sent) Password reset link for ${email}: ${link}`);
     res.json({ ok: true });
   } catch (e) { console.error('pw reset request:', e.message); res.status(500).json({ error: 'Could not request reset' }); }
 });
@@ -2930,6 +3070,12 @@ const server = app.listen(PORT, async () => {
     const pruneResets = () => pool.query("DELETE FROM password_resets WHERE expires_at < now()").catch(() => {});
     pruneResets();
     setInterval(pruneResets, 24 * 60 * 60 * 1000).unref();
+    // Abandoned-cart reminder job: check every 15 minutes.
+    setInterval(runAbandonedCartReminders, 15 * 60 * 1000).unref();
+    // Prune old cart rows (>30 days) so the table doesn't grow forever.
+    const pruneCarts = () => pool.query("DELETE FROM abandoned_carts WHERE updated_at < now() - interval '30 days'").catch(() => {});
+    setInterval(pruneCarts, 24 * 60 * 60 * 1000).unref();
+    console.log(`   Abandoned-cart reminders: ${WHATSAPP_TOKEN || SMTP_URL ? `on (nudge after ${ABANDON_AFTER_MIN} min)` : 'table ready, but set WHATSAPP_TOKEN or SMTP_URL to actually send'}`);
   }
   console.log('');
 });
