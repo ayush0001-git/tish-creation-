@@ -1962,6 +1962,10 @@
         fallback chal jaata hai — checkout kabhi dead-end nahi hota.
      ========================================================================== */
   const CH = { method:null, placed:false, order:null };   // method: null | "upi" | "cod"
+  // Shipping charged on the just-placed order, snapshotted so the WhatsApp
+  // message shows the right amount even after the cart is cleared. (Replaces the
+  // old cartShip.__last function-property memo — same behaviour, no hidden state.)
+  let lastOrderShip = null;
   let coDeliv = null;                       // { serviceable, city, dateText } | { error }
   const form = { name:"", phone:"", email:"", a1:"", a2:"", city:"", state:"", pin:"" };
   const IN_STATES = ["Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa","Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala","Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland","Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura","Uttar Pradesh","Uttarakhand","West Bengal","Andaman & Nicobar Islands","Chandigarh","Dadra & Nagar Haveli and Daman & Diu","Delhi","Jammu & Kashmir","Ladakh","Lakshadweep","Puducherry"];
@@ -2005,6 +2009,10 @@
     if (!form.name && USER && USER.name) form.name = USER.name;
     if (!form.email && USER && USER.email) form.email = USER.email;
     CH.placed = false; CH.method = defaultPayMethod(); CH.order = null;
+    // Fresh idempotency key per checkout attempt — the server dedups on this so a
+    // double-click / retry can't create two orders (or two charges). Cleared on
+    // success so the next checkout gets a new one.
+    if (!CH.idemKey) CH.idemKey = (self.crypto && crypto.randomUUID ? crypto.randomUUID() : "idem-" + Date.now().toString(36) + Math.random().toString(36).slice(2));
     prefillCheckoutFromProfile();
     openPanel($("#checkoutModal"));
     renderCheckout();
@@ -2310,7 +2318,7 @@
 
   /* WhatsApp order message — order ID + real shipping + coupon ke saath. */
   function waMsgText(orderId, utr){
-    const ship = cartShip.__last != null ? cartShip.__last : cartShip();
+    const ship = lastOrderShip != null ? lastOrderShip : cartShip();
     const addr = [form.a1.trim(), form.a2.trim(), form.city.trim() + ", " + form.state, digits(form.pin)].filter(Boolean).join(", ");
     let msg = "🛍 *New Order — Tish Creations*\n";
     if (orderId) msg += "Order ID: " + orderId + "\n";
@@ -2365,6 +2373,7 @@
     if (TC_CONFIG.apiEnabled){
       const orderPayload = {
         items: bag.map(i=>({ id:i.id, qty:i.qty })),
+        idempotencyKey: CH.idemKey || "",
         paymentMode: CH.method === "cod" ? "cod" : "prepaid",
         paymentMethod: CH.method,
         couponCode: COUPON.applied ? COUPON.code : "",
@@ -2381,7 +2390,7 @@
         });
         const d = await r.json().catch(()=>({}));
         if (!r.ok || !d.ok){ handleReject(r.status, d); done(); return; }
-        cartShip.__last = cartShip();
+        lastOrderShip = cartShip();
         CH.order = { id:d.orderId, total:Number(d.total)||grandTotal(), token:d.guestToken||"", waLink:d.whatsappLink||"", mode:CH.method, utr:utr, status:"pending", ts:Date.now() };
         saveLocalOrder(CH.order);
         // Non-blocking note: the order IS placed; the coupon just didn't apply.
@@ -2402,7 +2411,7 @@
       } catch(e){ toast("Could not reach the server — please check your connection and try again"); done(); return; }
     }
     /* Fallback (file:// preview / server down): purana WhatsApp flow. */
-    cartShip.__last = cartShip();
+    lastOrderShip = cartShip();
     window.open("https://wa.me/" + (S().wa||"") + "?text=" + encodeURIComponent(waMsgText("", utr)), "_blank");
     CH.order = null;
     finishOrder();
@@ -2410,6 +2419,7 @@
 
   function finishOrder(){
     CH.placed = true;
+    CH.idemKey = null;   // order succeeded — next checkout gets a fresh idempotency key
     if (window.tcTrack) tcTrack("purchase", { transaction_id: (CH.order && CH.order.id) || "", currency:"INR", value: (CH.order && CH.order.total) || grandTotal() });
     bag = []; saveBag();
     COUPON.code = ""; COUPON.amount = 0; COUPON.applied = false;
@@ -3186,15 +3196,21 @@
   }
 
   function openAdmin(){
-    $("#adminPanel").classList.add("open");
+    const panel = document.getElementById("adminPanel"); if (!panel) return;
+    panel.classList.add("open");
     document.body.style.overflow = "hidden";
     ADMIN.server = TC_CONFIG.apiEnabled;
-    $("#adStatus").textContent = ADMIN.server ? "Server connected" : "Standalone mode";
+    const st = document.getElementById("adStatus"); if (st) st.textContent = ADMIN.server ? "Server connected" : "Standalone mode";
     if (ADMIN.authed) return showAdminMain();
     if (ADMIN.server){
-      fetch(TC_CONFIG.backendUrl + "/api/admin/me", { credentials:"include" })
+      // 5s timeout so a dead/hanging server falls back to the login screen
+      // instead of leaving the panel stuck on "Server connected" forever.
+      const ctrl = new AbortController();
+      const to = setTimeout(()=>ctrl.abort(), 5000);
+      fetch(TC_CONFIG.backendUrl + "/api/admin/me", { credentials:"include", signal: ctrl.signal })
         .then(r=>r.json()).then(d=>{ if (d && d.isAdmin){ ADMIN.authed = true; showAdminMain(); } else showAdminLogin(); })
-        .catch(showAdminLogin);
+        .catch(showAdminLogin)
+        .finally(()=>clearTimeout(to));
     } else showAdminLogin();
   }
   function closeAdmin(){
@@ -3612,10 +3628,13 @@
     ADMIN.authed = false; closeAdmin(); toast("Owner logged out");
   });
 
-  /* admin entry: #admin / ?admin=1 / footer link */
+  /* admin entry: #admin / ?admin=1 / ?force=openadmin (panic URL) / footer link */
   function maybeOpenAdmin(){
     try {
       const u = new URL(location.href);
+      // ?force=openadmin also clears a possibly-stale local passcode so a bad
+      // tc_lux_ownkey (e.g. set in a file:// preview) can't lock you out.
+      if (u.searchParams.get("force")==="openadmin"){ try { localStorage.removeItem("tc_lux_ownkey"); } catch(e){} openAdmin(); return; }
       if (u.searchParams.get("admin")==="1" || location.hash==="#admin") openAdmin();
     } catch(e){}
   }
@@ -4165,19 +4184,23 @@
   }
   $("#yr").textContent = new Date().getFullYear();
 
-  /* ---------- init ---------- */
-  renderAll();
-  refreshBagUI();
-  refreshWishUI();
-  refreshAcctBtn();
-  restoreCustomer();
-  loadServerConfig();
-  syncFromBackend();
-  maybeOpenAdmin();
-  maybeHandlePhonePeReturn();
-  renderRecent();
-  maybeOpenReset();
-  maybeOpenProduct();
+  /* ---------- init ----------
+     Each step is isolated: if one throws (a bad setting, a null node, a flaky
+     API), the others — including maybeOpenAdmin() and maybeOpenProduct() — still
+     run. Previously a single throw here killed every step after it. */
+  function safeInit(label, fn){ try { fn(); } catch(e){ console.error("init:"+label, e); } }
+  safeInit("renderAll", renderAll);
+  safeInit("refreshBagUI", refreshBagUI);
+  safeInit("refreshWishUI", refreshWishUI);
+  safeInit("refreshAcctBtn", refreshAcctBtn);
+  safeInit("restoreCustomer", restoreCustomer);
+  safeInit("loadServerConfig", loadServerConfig);
+  safeInit("syncFromBackend", syncFromBackend);
+  safeInit("maybeOpenAdmin", maybeOpenAdmin);
+  safeInit("maybeHandlePhonePeReturn", maybeHandlePhonePeReturn);
+  safeInit("renderRecent", renderRecent);
+  safeInit("maybeOpenReset", maybeOpenReset);
+  safeInit("maybeOpenProduct", maybeOpenProduct);
   </script>
 </body>
 </html>

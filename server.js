@@ -326,6 +326,16 @@ async function sendWhatsAppToCustomer(order, customerPhone) {
   return { ok: false, fallbackLink: link };
 }
 
+/* Build the tappable wa.me confirmation link SYNCHRONOUSLY (no network call), so
+   checkout can return it instantly while the Cloud API send runs in the
+   background — instead of blocking the response for up to 8s on the API. */
+function buildWaFallbackLink(order, customerPhone) {
+  const num = String(customerPhone || '').replace(/[^\d]/g, '');
+  if (!num) return null;
+  const fullNum = num.length === 10 ? `91${num}` : num;
+  return `https://wa.me/${fullNum}?text=${encodeURIComponent(buildWhatsAppOrderMessage(order))}`;
+}
+
 function buildWhatsAppOrderMessage(order) {
   const items = (order.items || []).map(it => `• ${it.name || it.id} × ${it.qty} = ₹${(it.price * it.qty).toLocaleString('en-IN')}`).join('\n');
   return `*🌸 Tish Creations — Order Confirmation 🌸*
@@ -851,12 +861,20 @@ app.use(cors({
 }));
 
 // Capture the raw body ONLY for the webhook route (needed for exact-byte HMAC).
-app.use(express.json({
+// NOTE: /api/upload is EXEMPTED here so this 256KB cap doesn't reject real photos
+// before the route's own 6MB parser runs — otherwise base64 images (almost always
+// >256KB) 413 here and photo upload silently never works. The upload route
+// (requireAdmin + express.json({limit:'6mb'})) parses its own body.
+const globalJsonParser = express.json({
   limit: '256kb',
   verify: (req, _res, buf) => {
     if (req.originalUrl === '/api/payment/webhook') req.rawBody = buf;
   },
-}));
+});
+app.use((req, res, next) => {
+  if (req.path === '/api/upload') return next();
+  return globalJsonParser(req, res, next);
+});
 app.use(cookieParser());
 
 /* ---- Prototype-pollution guard --------------------------------------------
@@ -885,6 +903,12 @@ app.use((req, res, next) => {
    Origin check. The Razorpay webhook is JSON too, so it is unaffected. ------ */
 app.use((req, res, next) => {
   if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT') {
+    // Exempt the CSP report endpoint: browsers send violation reports as
+    // application/csp-report (legacy) or application/reports+json (Reporting API),
+    // never application/json. They're browser-generated and non-sensitive, so the
+    // content-type CSRF guard doesn't apply here — otherwise reports 415 and we'd
+    // never see any violations logged.
+    if (req.path === '/api/csp-report') return next();
     const ct = (req.headers['content-type'] || '').toLowerCase();
     if (!ct.includes('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json' });
   }
@@ -1020,7 +1044,9 @@ app.use((req, res, next) => {
     const skip = req.path === '/api/health' || (req.method === 'OPTIONS');
     if (skip && !isProd) return;
     const ip = (req.ip || req.connection?.remoteAddress || '-').replace(/^::ffff:/, '');
-    console.log(`${new Date().toISOString()} ${ip} ${req.method} ${req.originalUrl} ${res.statusCode} ${dur}ms`);
+    // Log the PATH only, never originalUrl — query strings can carry reset tokens,
+    // guest order tokens, UPI params, etc. that must not land in plaintext logs.
+    console.log(`${new Date().toISOString()} ${ip} ${req.method} ${req.path} ${res.statusCode} ${dur}ms`);
   });
   next();
 });
@@ -1028,6 +1054,21 @@ app.use((req, res, next) => {
 const ORDER_STAGES = ['pending', 'confirmed', 'packed', 'shipped', 'out_for_delivery', 'delivered', 'cancelled'];
 const ALLOWED_CURRENCIES = new Set(['INR']);
 const MAX_ITEMS = 100;
+
+/* Order idempotency: a double-clicked "Place Order" (or a client retry) sends the
+   same idempotencyKey. We cache the first successful response for ~5 min and
+   replay it on repeats, so no duplicate orders / charges are created. In-memory =
+   per-instance; it catches the real-world double-click (same instance, same
+   second). A stampede lock (in-flight set) also blocks concurrent duplicates. */
+const idempotencyCache = new Map();   // key -> { response, ts }
+const idempotencyInFlight = new Set();
+const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
+function pruneIdempotency() {
+  const now = mono();
+  for (const [k, v] of idempotencyCache) if (now - v.ts > IDEMPOTENCY_TTL_MS) idempotencyCache.delete(k);
+}
+// mono() = monotonic-ish timestamp; process.uptime is safe (Date.now is fine too here).
+function mono() { return Math.round(process.uptime() * 1000); }
 const COD_SHIPPING_FEE = 60; // flat COD shipping — MUST match the storefront checkout
 // C2 fix: free-shipping threshold for retail COD orders. The client (cart drawer
 // + checkout review) gives FREE shipping when subtotal >= 1499, regardless of
@@ -1197,7 +1238,9 @@ async function computeOrderTotals(items, paymentMode) {
   const orderItems = [];
   for (const it of list) {
     const p = byId[String(it && it.id)];
-    if (!p || p.inStock === false) { const e = new Error('Item unavailable'); e.code = 'ITEM_UNAVAILABLE'; throw e; }
+    // Fail closed: only an explicitly in-stock item is orderable. Previously
+    // `=== false` let null/undefined/0 slip through as if in stock.
+    if (!p || !p.inStock) { const e = new Error('Item unavailable'); e.code = 'ITEM_UNAVAILABLE'; throw e; }
     const qty = Math.max(1, Math.min(999, parseInt(it.qty, 10) || 1));
     subtotal += Number(p.price) * qty;
     orderItems.push({ id: String(it.id), qty, price: Number(p.price) });
@@ -1287,7 +1330,14 @@ async function claimWebhookEvent(eventId) {
   try {
     const r = await pool.query('INSERT INTO processed_webhooks (event_id) VALUES ($1) ON CONFLICT DO NOTHING', [eventId]);
     return r.rowCount === 1;
-  } catch { return true; }
+  } catch (e) {
+    // FAIL CLOSED: if we can't record the event, DON'T process it — otherwise a
+    // DB hiccup makes every retry look "fresh" and the payment gets processed
+    // (and the owner notified) multiple times. The status-check API is the safety
+    // net that will still mark the order paid on the customer's return.
+    console.error('claimWebhookEvent:', e.message);
+    return false;
+  }
 }
 
 /* ===========================================================================
@@ -1405,7 +1455,15 @@ async function notifyOwnerOrderPaid(storeOrderId) {
 /* ===========================================================================
    ROUTES
 =========================================================================== */
-app.get('/api/health', (_req, res) => res.json({ ok: true, env: NODE_ENV, db: !!pool, ai: !!aiClient }));
+app.get('/api/health', async (_req, res) => {
+  // Actually ping the DB, don't just check that a pool object exists. Previously
+  // `db: !!pool` was truthy even when Postgres was unreachable, so the platform's
+  // health check passed during a DB outage and never restarted the service.
+  let db = pool ? false : null; // null = no DB configured (demo mode)
+  if (pool) { try { await pool.query('SELECT 1'); db = true; } catch (e) { db = false; } }
+  const healthy = pool ? db === true : true;
+  res.status(healthy ? 200 : 503).json({ ok: healthy, env: NODE_ENV, db, ai: !!aiClient });
+});
 
 // CSP violation reports land here (browsers POST them as application/csp-report
 // or application/reports+json). We just log a concise line so you can see what
@@ -1691,7 +1749,14 @@ app.post('/api/payment/verify', paymentLimiter, async (req, res) => {
       // markOrderPaid returned false → amount mismatch. Refuse to verify.
       return res.status(400).json({ error: 'Payment amount does not match order total. Please contact support.' });
     }
-  } catch (e) { console.error('mark paid:', e.message); }
+  } catch (e) {
+    // CRITICAL: if marking the order paid THREW (DB error etc.), do NOT fall
+    // through to the success response below — that would tell the customer the
+    // payment is verified while the order is still unpaid, and fire the owner
+    // "new sale" notification on a phantom sale.
+    console.error('mark paid:', e.message);
+    return res.status(500).json({ error: 'We could not confirm your payment just now. If money was deducted, please contact us with your order ID — we will sort it out right away.' });
+  }
 
   // M6 fix: NOW notify the owner — payment is verified, this is a real sale.
   // (Previously the owner was notified on order creation, which fired even for
@@ -2261,7 +2326,14 @@ app.post('/api/customer/change-password', authLimiter, requireCustomer, async (r
     const hash = await bcrypt.hash(newPassword, 12);
     if (!pool) c.password_hash = hash;
     else await pool.query('UPDATE customers SET password_hash=$2 WHERE id=$1', [req.session.customerId, hash]);
-    res.json({ ok: true });
+    // Rotate the session ID after a password change (session-fixation defense —
+    // a session captured before the change no longer maps to a valid session).
+    const cid = req.session.customerId;
+    req.session.regenerate((err) => {
+      if (err) { console.error('session regen after pw change:', err.message); return res.json({ ok: true }); }
+      req.session.customerId = cid;
+      res.json({ ok: true });
+    });
   } catch (e) { console.error('change password:', e.message); res.status(500).json({ error: 'Could not change password' }); }
 });
 
@@ -2312,6 +2384,22 @@ app.post('/api/customer/google', authLimiter, async (req, res) => {
 // to their customer_id (and shows in "My Orders"). If not, a guest_token is
 // generated so they can still track the order via the link we return.
 app.post('/api/orders', orderLimiter, async (req, res) => {
+  // ---- Idempotency guard (prevents duplicate orders from double-click / retry) ----
+  const idemKey = String(req.body?.idempotencyKey || '').slice(0, 100);
+  if (idemKey) {
+    pruneIdempotency();
+    const cached = idempotencyCache.get(idemKey);
+    if (cached) return res.json(cached.response);                 // replay the first successful order
+    if (idempotencyInFlight.has(idemKey))                          // a concurrent duplicate is mid-flight
+      return res.status(409).json({ error: 'This order is already being placed — please wait a moment.' });
+    idempotencyInFlight.add(idemKey);
+    res.on('finish', () => idempotencyInFlight.delete(idemKey));
+    const _json = res.json.bind(res);
+    res.json = (body) => {                                         // cache only a successful create for replay
+      if (res.statusCode >= 200 && res.statusCode < 300 && body && body.ok) idempotencyCache.set(idemKey, { response: body, ts: mono() });
+      return _json(body);
+    };
+  }
   const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, MAX_ITEMS) : [];
   if (!items.length) return res.status(400).json({ error: 'Cart is empty' });
   // If signed in, verify email (defense in depth) and fall back to account email.
@@ -2327,6 +2415,10 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
     const gc = req.body?.customer || {};
     if (!gc.name || !gc.email || !gc.phone)
       return res.status(400).json({ error: 'Name, email, and phone are required for guest checkout.' });
+    // Validate the email FORMAT, not just that it's non-empty — otherwise garbage
+    // gets stored as customer_email and confirmation emails silently fail.
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(gc.email).trim()))
+      return res.status(400).json({ error: 'Please enter a valid email address for order updates.' });
   }
   // Payment policy: Cash on Delivery is disabled by default (ALLOW_COD=false) —
   // every order must be paid online (Razorpay or UPI QR). A direct API call
@@ -2499,10 +2591,13 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
     const custEmail = order.customer_email;
     const custPhone = order.customer_phone;
     if (custEmail) sendOrderConfirmationEmail(order, custEmail).catch(e => console.error('email bg:', e.message));
-    let waResult = { ok: false, fallbackLink: null };
+    // Fire-and-forget the WhatsApp confirmation — the Cloud API can take up to 8s
+    // and previously blocked the checkout response (spinning button). We compute
+    // the tappable wa.me fallback link synchronously and send in the background.
+    let waFallback = null;
     if (custPhone) {
-      try { waResult = await sendWhatsAppToCustomer(order, custPhone); }
-      catch (e) { console.error('whatsapp bg:', e.message); }
+      waFallback = buildWaFallbackLink(order, custPhone);
+      sendWhatsAppToCustomer(order, custPhone).catch(e => console.error('whatsapp bg:', e.message));
     }
     // M6 fix + UPI gap fix: notify the owner immediately for COD and UPI orders.
     // For Razorpay prepaid, the owner notification fires AFTER payment is
@@ -2521,8 +2616,8 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
       ok: true, orderId: order.id, status: order.status, total: order.total,
       guestToken, couponError,
       emailSent: !!custEmail,           // tells the client whether to show "email sent" UI
-      whatsappLink: waResult.fallbackLink,  // wa.me link if Cloud API not configured
-      whatsappSent: waResult.ok,            // true if the Cloud API delivered the message
+      whatsappLink: waFallback,         // tappable wa.me link (sent in bg too via Cloud API if configured)
+      whatsappSent: false,              // delivered in the background; link above is the manual fallback
     });
   } catch (e) {
     // LEAK FIX: if txClient is still held (e.g. computeOrderTotals or
@@ -2648,11 +2743,29 @@ app.get('/api/admin/orders', requireAdmin, async (_req, res) => {
   catch (e) { console.error('admin orders:', e.message); res.status(500).json({ error: 'Could not load orders' }); }
 });
 
+// Order status can only move FORWARD through the fulfilment stages, or be
+// cancelled (unless already delivered). This blocks nonsensical transitions like
+// delivered→pending or cancelled→shipped that the old "is it in the enum" check
+// allowed. Same-status is fine (e.g. you're only updating the tracking number).
+const STAGE_ORDER = ['pending', 'confirmed', 'packed', 'shipped', 'out_for_delivery', 'delivered'];
+function isValidStatusTransition(from, to) {
+  if (to === from) return true;
+  if (to === 'cancelled') return from !== 'delivered';
+  const fi = STAGE_ORDER.indexOf(from), ti = STAGE_ORDER.indexOf(to);
+  return fi !== -1 && ti !== -1 && ti > fi; // forward only (can skip stages)
+}
 app.patch('/api/admin/orders/:id', requireAdmin, async (req, res) => {
   const { status, trackingNumber, carrier } = req.body || {};
   if (status && !ORDER_STAGES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const orderId = String(req.params.id).slice(0, 60);
   try {
-    const o = await updateOrder(String(req.params.id).slice(0, 60), {
+    if (status) {
+      const current = await getOrderById(orderId);
+      if (!current) return res.status(404).json({ error: 'Order not found' });
+      if (!isValidStatusTransition(current.status, status))
+        return res.status(400).json({ error: `Can't move an order from "${current.status}" to "${status}".` });
+    }
+    const o = await updateOrder(orderId, {
       status,
       trackingNumber: trackingNumber !== undefined ? String(trackingNumber).slice(0, 60) : undefined,
       carrier: carrier !== undefined ? String(carrier).slice(0, 40) : undefined,
@@ -2836,8 +2949,12 @@ app.post('/api/customer/password-reset/request', authLimiter, async (req, res) =
     const origin = STOREFRONT_URL || (allowlist[0] || '');
     const link = `${origin}/#reset?token=${token}&email=${encodeURIComponent(email)}`;
     const sent = await sendPasswordResetEmail(email, c.name, link);
-    if (!sent) console.log(`📧 (email not sent) Password reset link for ${email}: ${link}`);
-    res.json({ ok: true });
+    // SECURITY: never log the reset link/token — anyone with log access could use
+    // it to take over the account. Only note that a reset was created + whether
+    // email delivery is configured. In dev (non-prod) with no SMTP, surface the
+    // link in the RESPONSE so you can still test, but never write it to stdout.
+    if (!sent) console.warn(`Password reset created for a customer, but SMTP is not configured — they cannot receive the link. Set SMTP_URL.`);
+    res.json(!sent && !isProd ? { ok: true, devResetLink: link } : { ok: true });
   } catch (e) { console.error('pw reset request:', e.message); res.status(500).json({ error: 'Could not request reset' }); }
 });
 
@@ -2858,10 +2975,22 @@ app.post('/api/customer/password-reset/confirm', authLimiter, async (req, res) =
     const rec = rows[0];
     if (!rec) return res.status(410).json({ error: 'Reset link is invalid or expired' });
     const hash = await bcrypt.hash(newPassword, 12);
-    await pool.query('BEGIN');
-    await pool.query('UPDATE customers SET password_hash=$1 WHERE id=$2', [hash, rec.customer_id]);
-    await pool.query('UPDATE password_resets SET used=TRUE WHERE id=$1', [rec.id]);
-    await pool.query('COMMIT');
+    // Real transaction on ONE connection. The previous code called pool.query()
+    // for BEGIN/UPDATE/UPDATE/COMMIT — each acquires a DIFFERENT pooled client,
+    // so there was no transaction at all: if the second UPDATE failed, the
+    // password was already changed but the reset token stayed usable.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE customers SET password_hash=$1 WHERE id=$2', [hash, rec.customer_id]);
+      await client.query('UPDATE password_resets SET used=TRUE WHERE id=$1', [rec.id]);
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
+    }
     res.json({ ok: true });
   } catch (e) { console.error('pw reset confirm:', e.message); res.status(500).json({ error: 'Could not reset password' }); }
 });
@@ -3125,6 +3254,14 @@ const server = app.listen(PORT, async () => {
 });
 
 // Graceful shutdown for clean container restarts.
-function shutdown() { server.close(() => { if (pool) pool.end().finally(() => process.exit(0)); else process.exit(0); }); }
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) return; shuttingDown = true;
+  // Force-exit after 10s so a hung keep-alive connection can't block the restart
+  // (server.close() waits for all sockets to drain, which may never happen).
+  const force = setTimeout(() => { console.warn('shutdown: forced exit after timeout'); process.exit(1); }, 10000);
+  force.unref();
+  server.close(() => { if (pool) pool.end().finally(() => process.exit(0)); else process.exit(0); });
+}
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
