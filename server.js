@@ -168,6 +168,12 @@ const PG_URL = (typeof DATABASE_URL === 'string' &&
   /^(postgres|postgresql):\/\//i.test(DATABASE_URL.trim())) ? DATABASE_URL.trim() : '';
 
 const isProd = NODE_ENV === 'production';
+// Session-cookie SameSite policy. Default 'lax': the storefront + API are served
+// from the SAME origin by this service (see the static routes near the bottom),
+// so Lax is correct and safer (smaller CSRF surface) than None. Only set
+// COOKIE_SAMESITE=none if you deploy the storefront on a DIFFERENT origin than
+// the API (cross-origin cookies require SameSite=None + Secure).
+const COOKIE_SAMESITE = (process.env.COOKIE_SAMESITE || 'lax').toLowerCase();
 // Google sign-in is active only when the library is installed AND a client ID is set.
 const googleClient = (GoogleAuthClient && GOOGLE_CLIENT_ID) ? new GoogleAuthClient(GOOGLE_CLIENT_ID) : null;
 
@@ -800,14 +806,16 @@ app.use(helmet({
     reportOnly: true,
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", 'https://checkout.razorpay.com', 'https://accounts.google.com', 'https://apis.google.com'],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://checkout.razorpay.com', 'https://accounts.google.com', 'https://apis.google.com', 'https://www.googletagmanager.com', 'https://connect.facebook.net'],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       imgSrc: ["'self'", 'data:', 'https:'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-      connectSrc: ["'self'", 'https://api.phonepe.com', 'https://api-preprod.phonepe.com', 'https://track.delhivery.com', 'https://accounts.google.com'],
+      connectSrc: ["'self'", 'https://api.phonepe.com', 'https://api-preprod.phonepe.com', 'https://track.delhivery.com', 'https://accounts.google.com', 'https://www.google-analytics.com', 'https://region1.google-analytics.com', 'https://connect.facebook.net'],
       frameSrc: ["'self'", 'https://checkout.razorpay.com', 'https://api.razorpay.com', 'https://accounts.google.com'],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
+      // Violations are POSTed here so they're logged instead of silently dropped.
+      reportUri: ['/api/csp-report'],
     },
   },
   crossOriginResourcePolicy: { policy: 'same-origin' },
@@ -898,8 +906,8 @@ app.use(session({
   rolling: true,
   cookie: {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax', // 'none' so the static storefront (different origin) can hold the cookie
+    secure: isProd || COOKIE_SAMESITE === 'none',  // SameSite=None requires Secure
+    sameSite: COOKIE_SAMESITE,   // 'lax' by default (same-origin storefront); 'none' for cross-origin deploys
     // 24h for customer sessions is plenty; admin sessions are explicitly
     // shortened below by re-setting the cookie on /api/admin/login.
     maxAge: 1000 * 60 * 60 * 24,
@@ -1028,7 +1036,12 @@ const COD_SHIPPING_FEE = 60; // flat COD shipping — MUST match the storefront 
 // charged ₹60 → customer asked for ₹60 more than they agreed to). Now both
 // sides agree: prepaid = always free; COD = free if subtotal >= threshold,
 // else ₹60.
-const RETAIL_FREE_SHIP_THRESHOLD = 1499;
+// Must match the storefront's `freeShipAbove` (default ₹1000) AND the trust-strip
+// copy ("Free Shipping ₹1000+"). Previously 1499, which silently charged ₹60 on
+// COD orders between ₹1000–1499 even though the cart showed FREE. Env-configurable
+// so the owner can change it in one place — but keep it in sync with the client
+// setting or the webhook amount cross-check will reject legit payments.
+const RETAIL_FREE_SHIP_THRESHOLD = parseInt(process.env.FREE_SHIP_THRESHOLD || '1000', 10);
 
 /* Shipping rule for the AUTHORITATIVE order total. This MUST mirror the
    storefront checkout math (index.html `renderCartItems` + `_chkStep2HTML`):
@@ -1394,12 +1407,28 @@ async function notifyOwnerOrderPaid(storeOrderId) {
 =========================================================================== */
 app.get('/api/health', (_req, res) => res.json({ ok: true, env: NODE_ENV, db: !!pool, ai: !!aiClient }));
 
+// CSP violation reports land here (browsers POST them as application/csp-report
+// or application/reports+json). We just log a concise line so you can see what
+// the report-only policy would block before switching it to enforcing. Accepts
+// the special content types and always returns 204.
+app.post('/api/csp-report',
+  express.json({ type: ['application/csp-report', 'application/reports+json', 'application/json'], limit: '16kb' }),
+  (req, res) => {
+    try {
+      const r = req.body && (req.body['csp-report'] || (Array.isArray(req.body) ? req.body[0]?.body : req.body));
+      if (r) console.warn('CSP violation:', JSON.stringify({
+        blocked: r['blocked-uri'] || r.blockedURL, directive: r['violated-directive'] || r.effectiveDirective, doc: r['document-uri'] || r.documentURL,
+      }).slice(0, 500));
+    } catch (e) { /* ignore malformed reports */ }
+    res.status(204).end();
+  });
+
 // Public, non-sensitive runtime config the storefront reads at boot so the UI
 // always matches server policy (e.g. hide the COD option when COD is off).
 app.get('/api/config', (_req, res) => res.json({
   allowCod: ALLOW_COD_ENABLED,
   emailVerification: EMAIL_VERIFICATION_ON,
-  loginRequiredToOrder: true,
+  loginRequiredToOrder: false,   // guest checkout is enabled (name+email+phone) — matches the FAQ
   payments: {
     phonepe: PHONEPE_ON,
     razorpay: !!(Razorpay && RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET),
@@ -1574,7 +1603,7 @@ app.post('/api/admin/login', authLimiter, async (req, res) => {
 // clearCookie response as a different cookie and the original stays alive —
 // which previously meant "logout" didn't actually log you out (the next
 // /api/customer/me still returned the customer).
-const COOKIE_CLEAR_OPTS = { path: '/', httpOnly: true, sameSite: isProd ? 'none' : 'lax', secure: isProd };
+const COOKIE_CLEAR_OPTS = { path: '/', httpOnly: true, sameSite: COOKIE_SAMESITE, secure: isProd || COOKIE_SAMESITE === 'none' };
 
 app.post('/api/admin/logout', (req, res) => { req.session.destroy(() => { res.clearCookie('tc.sid', COOKIE_CLEAR_OPTS); res.json({ ok: true }); }); });
 app.get('/api/admin/me', (req, res) => res.json({ isAdmin: !!(req.session && req.session.isAdmin) }));
@@ -2304,10 +2333,13 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
   // with paymentMode:'cod' is rejected here, not just hidden in the UI.
   if (!ALLOW_COD_ENABLED && req.body?.paymentMode !== 'prepaid')
     return res.status(400).json({ error: 'Cash on Delivery is not available. Please pay online (UPI / Card / Net Banking) to place your order.' });
-  // M5 fix: enforce the minimum-order value server-side too, not just in the
-  // browser. The client's ₹1000 gate is cosmetic — a direct API call could
-  // bypass it. Now the server rejects any order below the threshold.
-  const MIN_ORDER_VALUE = 1000;
+  // Minimum-order value, enforced server-side (a direct API call could bypass
+  // the browser check). Defaults to 0 = NO minimum, matching the storefront's
+  // `minOrder: 0` setting — ₹1000 is only the FREE-SHIPPING threshold, not a
+  // floor to order. Set MIN_ORDER_VALUE in the env if you want a real minimum
+  // (e.g. for wholesale). Previously hardcoded to 1000, which wrongly rejected
+  // every small retail order (a ₹240 item) even though the UI allowed it.
+  const MIN_ORDER_VALUE = parseInt(process.env.MIN_ORDER_VALUE || '0', 10);
   const c = req.body?.customer || {};
   const pincode = String(c.pincode || '').trim();
   if (!isValidPincode(pincode)) return res.status(400).json({ error: 'A valid 6-digit delivery pincode is required' });
@@ -2935,6 +2967,18 @@ const fsMod = require('fs');
 // Explicitly expose only the safe public files.
 for (const f of ['manifest.json', 'robots.txt']) {
   app.get('/' + f, (_req, res) => res.sendFile(path.join(__dirname, f)));
+}
+// Favicon: browsers auto-request /favicon.ico. If a real favicon.ico/png is
+// present in the project root, serve it; otherwise fall back to a branded SVG
+// monogram so the tab icon shows and the request never 404s. (Modern browsers
+// accept SVG favicons; drop a real favicon.ico next to index.html to override.)
+const FAVICON_SVG = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%23C6A35B'/><text x='50' y='66' font-size='56' text-anchor='middle' fill='%23fff' font-family='Georgia,serif'>T</text></svg>".replace(/%23/g, '#');
+for (const icon of ['favicon.ico', 'favicon.png', 'apple-touch-icon.png']) {
+  app.get('/' + icon, (_req, res) => {
+    const abs = path.join(__dirname, icon);
+    if (fsMod.existsSync(abs)) return res.sendFile(abs);
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(FAVICON_SVG);
+  });
 }
 /* Per-page SEO meta injection. WhatsApp / Instagram / Google fetch the RAW
    HTML and never run JavaScript, so without this every shared link previewed

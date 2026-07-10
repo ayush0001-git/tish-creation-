@@ -965,6 +965,13 @@
 
 <body>
 
+  <noscript>
+    <div style="background:#1E140A;color:#F3EBDB;padding:14px 18px;text-align:center;font-family:system-ui,sans-serif;font-size:14px;line-height:1.6">
+      ✨ <b>Tish Creations</b> needs JavaScript to shop online. Please enable JavaScript in your browser,
+      or message us on WhatsApp at <a href="https://wa.me/919837229280" style="color:#D4A959">+91 98372 29280</a> to place your order.
+    </div>
+  </noscript>
+
   <!-- ══════════ TOP STRIP ══════════ -->
   <div class="topbar">
     <div class="wrap">
@@ -1085,7 +1092,7 @@
           <h2 class="h2">A Little World of <em>Pretty Things</em></h2>
         </div>
       </div>
-      <div class="cat-grid reveal" id="catGrid"></div>
+      <div class="cat-grid" id="catGrid"></div>
     </div>
   </section>
 
@@ -1099,7 +1106,7 @@
         </div>
         <a class="sec-link" href="#collections">View All Collections →</a>
       </div>
-      <div class="prod-grid reveal" id="featuredGrid"><div class="skel-grid" id="skelFeat"></div></div>
+      <div class="prod-grid" id="featuredGrid"><div class="skel-grid" id="skelFeat"></div></div>
     </div>
   </section>
 
@@ -1134,7 +1141,7 @@
           </select>
         </div>
       </div>
-      <div class="prod-grid reveal" id="allGrid"><div class="skel-grid" id="skelAll"></div></div>
+      <div class="prod-grid" id="allGrid"><div class="skel-grid" id="skelAll"></div></div>
     </div>
   </section>
 
@@ -1876,9 +1883,21 @@
       else h += '<div class="cart-note info">🎉 <b>Yay!</b> You\'ve unlocked <b>Free Shipping!</b></div>';
     }
     h += '<div class="sum-line"><span>Subtotal</span><span>'+inr(sub)+'</span></div>';
-    h += '<div class="sum-line '+(ship===0?"free":"muted")+'"><span>Shipping'+(shipIsEstimate()?' <small>(approx*)</small>':'')+'</span><span>'+(ship===0?"FREE":inr(ship))+'</span></div>';
-    h += '<div class="sum-line total"><span>Grand Total</span><b>'+inr(grandTotal())+'</b></div>';
-    if (shipIsEstimate()) h += '<div class="gst-note">*Exact shipping will be calculated live from your <b>pincode</b> at checkout (Delhivery rate). FREE on orders '+inr(fm)+'+.</div>';
+    if (ship === 0){
+      /* free-shipping unlocked */
+      h += '<div class="sum-line free"><span>Shipping</span><span>FREE</span></div>';
+      h += '<div class="sum-line total"><span>Grand Total</span><b>'+inr(grandTotal())+'</b></div>';
+    } else if (shipIsEstimate()){
+      /* no pincode yet — DON'T show a misleading flat ₹ that then jumps up.
+         Ask for the pincode and keep the total honest ("subtotal + delivery"). */
+      h += '<div class="sum-line muted"><span>Shipping</span><span style="font-size:12px;font-style:italic">Enter pincode at checkout</span></div>';
+      h += '<div class="sum-line total"><span>Grand Total</span><b>'+inr(sub)+'<small style="font-weight:500;color:var(--muted)"> + delivery</small></b></div>';
+      h += '<div class="gst-note">📍 Exact delivery is calculated live from your <b>pincode</b> at checkout (real Delhivery rate — no surprises). <b>FREE</b> on orders '+inr(fm)+'+.</div>';
+    } else {
+      /* have a real live quote for this pincode */
+      h += '<div class="sum-line muted"><span>Shipping</span><span>'+inr(ship)+'</span></div>';
+      h += '<div class="sum-line total"><span>Grand Total</span><b>'+inr(grandTotal())+'</b></div>';
+    }
     const gst = String(S().gstNote||"").trim(); if (gst) h += '<div class="gst-note">'+esc(gst)+'</div>';
     h += ok
       ? '<button class="btn-wa" data-checkout><svg style="width:16px;height:16px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg> Proceed to Checkout</button>'
@@ -2080,8 +2099,17 @@
     let h = '<div class="co-sum">'
       + '<div class="sum-line"><span>Subtotal ('+bagQty()+' item'+(bagQty()>1?"s":"")+')</span><span>'+inr(sub)+'</span></div>';
     if (disc > 0) h += '<div class="sum-line disc"><span>Coupon · '+esc(COUPON.code)+'</span><span>−'+inr(disc)+'</span></div>';
-    h += '<div class="sum-line '+(ship===0?"free":"muted")+'"><span>Shipping'+(shipIsEstimate()?' <small>(approx*)</small>':'')+'</span><span>'+(ship===0?"FREE":inr(ship))+'</span></div>'
-      + '<div class="sum-line total"><span>Total to Pay</span><b>'+inr(grandTotal())+'</b></div>';
+    if (ship === 0){
+      h += '<div class="sum-line free"><span>Shipping</span><span>FREE</span></div>'
+        + '<div class="sum-line total"><span>Total to Pay</span><b>'+inr(grandTotal())+'</b></div>';
+    } else if (shipIsEstimate()){
+      /* pincode not entered yet — no misleading flat ₹; keep the total honest */
+      h += '<div class="sum-line muted"><span>Shipping</span><span style="font-size:12px;font-style:italic">Enter pincode below ↓</span></div>'
+        + '<div class="sum-line total"><span>Total to Pay</span><b>'+inr(Math.max(0, sub - disc))+'<small style="font-weight:500;color:var(--muted)"> + delivery</small></b></div>';
+    } else {
+      h += '<div class="sum-line muted"><span>Shipping</span><span>'+inr(ship)+'</span></div>'
+        + '<div class="sum-line total"><span>Total to Pay</span><b>'+inr(grandTotal())+'</b></div>';
+    }
     if (sub >= fm) h += '<div class="co-ship-note">🎉 <b>Free shipping</b> unlocked — your order is '+inr(fm)+'+.</div>';
     else if (SHIP.quote != null) h += '<div class="co-ship-note">🚚 Shipping to <b>'+esc(SHIP.city||("pincode "+SHIP.pin))+'</b> via live Delhivery rate — or add '+inr(fm-sub)+' more for <b>FREE</b> shipping.</div>';
     else h += '<div class="co-ship-note">*Enter your <b>pincode</b> below — exact shipping will be calculated live. Shipping is <b>FREE</b> on orders '+inr(fm)+'+.</div>';
@@ -2313,7 +2341,10 @@
         cartShip.__last = cartShip();
         CH.order = { id:d.orderId, total:Number(d.total)||grandTotal(), token:d.guestToken||"", waLink:d.whatsappLink||"", mode:CH.method, utr:utr, status:"pending", ts:Date.now() };
         saveLocalOrder(CH.order);
-        if (d.couponError) toast("Coupon: " + d.couponError);
+        // Non-blocking note: the order IS placed; the coupon just didn't apply.
+        // Delayed so it appears after the "Order placed" confirmation, and worded
+        // so it doesn't read like the order failed.
+        if (d.couponError) setTimeout(()=>toast("✓ Order confirmed — note: coupon couldn't be applied (" + d.couponError + ")"), 1600);
         // PhonePe / Razorpay: redirect to the gateway to actually pay.
         if (CH.method === "phonepe"){ await startPhonePe(d.orderId, d.guestToken||""); done(); return; }
         if (CH.method === "upi" && utr){
@@ -3963,8 +3994,12 @@
   function smoothScrollTo(e){
     const a = e.target.closest('a[href^="#"]');
     if (!a) return;
+    // Skip anchors that are really action triggers (open a modal / set a filter),
+    // not in-page scroll targets — their own handlers manage them. Prevent the
+    // bare href="#" from jumping to the top of the page.
+    if (a.hasAttribute("data-policy") || a.hasAttribute("data-filter") || a.hasAttribute("data-jump")){ e.preventDefault(); return; }
     const id = a.getAttribute("href").slice(1);
-    if (!id) return;
+    if (!id){ e.preventDefault(); return; }
     const target = document.getElementById(id);
     if (!target) return;
     e.preventDefault();
