@@ -1815,7 +1815,10 @@
           img: rp.img && String(rp.img).startsWith("data:") ? rp.img : (dbImg || rp.img || PLC),
           badge: rp.badge || "",
           feat: !!rp.feat,
-          hide: db.inStock === false ? true : !!rp.hide
+          // Out-of-stock should SHOW with an "Out of Stock" badge (disabled add
+          // button), not vanish. Only hide when the owner explicitly hides it.
+          hide: !!rp.hide,
+          oos: db.inStock === false
         };
       });
       const serverIds = new Set(list.map(p=>String(p.id)));
@@ -3632,9 +3635,11 @@
   function maybeOpenAdmin(){
     try {
       const u = new URL(location.href);
-      // ?force=openadmin also clears a possibly-stale local passcode so a bad
-      // tc_lux_ownkey (e.g. set in a file:// preview) can't lock you out.
-      if (u.searchParams.get("force")==="openadmin"){ try { localStorage.removeItem("tc_lux_ownkey"); } catch(e){} openAdmin(); return; }
+      // ?force=openadmin just opens the panel if the normal triggers glitched —
+      // it does NOT clear any passcode or bypass auth. On the live (server) site
+      // the owner still has to pass the server ADMIN_PASSWORD login; in standalone
+      // mode the local passcode prompt still applies.
+      if (u.searchParams.get("force")==="openadmin"){ openAdmin(); return; }
       if (u.searchParams.get("admin")==="1" || location.hash==="#admin") openAdmin();
     } catch(e){}
   }
@@ -3861,7 +3866,7 @@
       return;
     }
     try {
-      const r = await fetch(TC_CONFIG.apiBase + "/api/reviews/" + encodeURIComponent(productId), {credentials:"include"});
+      const r = await fetch(TC_CONFIG.backendUrl + "/api/reviews/" + encodeURIComponent(productId), {credentials:"include"});
       const d = await r.json();
       if (avg && d.avgRating != null) avg.textContent = "★ " + Number(d.avgRating).toFixed(1) + " (" + d.count + ")";
       else if (avg) avg.textContent = "";
@@ -3887,7 +3892,7 @@
     if (!body.trim()){ toast("Please write a short review"); return; }
     if (!TC_CONFIG.apiEnabled){ toast("Reviews require backend connection"); return; }
     try {
-      const r = await fetch(TC_CONFIG.apiBase + "/api/reviews", {
+      const r = await fetch(TC_CONFIG.backendUrl + "/api/reviews", {
         method:"POST", credentials:"include",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ productId: p.id, rating, body: body.trim() })

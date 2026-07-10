@@ -1062,6 +1062,25 @@ const MAX_ITEMS = 100;
    second). A stampede lock (in-flight set) also blocks concurrent duplicates. */
 const idempotencyCache = new Map();   // key -> { response, ts }
 const idempotencyInFlight = new Set();
+
+/* Per-account login lockout (complements the IP-based authLimiter). After
+   LOGIN_MAX_FAILS failures for one email, that account is locked for
+   LOGIN_LOCK_MS. In-memory / per-instance — blunts automated credential stuffing
+   without a schema change. */
+const loginFailures = new Map();      // email -> { count, until }
+const LOGIN_MAX_FAILS = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+function loginLockLeft(email) {
+  const rec = loginFailures.get(email);
+  return rec && rec.until && Date.now() < rec.until ? rec.until - Date.now() : 0;
+}
+function noteLoginFailure(email) {
+  const rec = loginFailures.get(email) || { count: 0, until: 0 };
+  rec.count += 1;
+  if (rec.count >= LOGIN_MAX_FAILS) { rec.until = Date.now() + LOGIN_LOCK_MS; rec.count = 0; }
+  loginFailures.set(email, rec);
+}
+function clearLoginFailures(email) { loginFailures.delete(email); }
 const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 function pruneIdempotency() {
   const now = mono();
@@ -1172,7 +1191,9 @@ async function saveCustomerOtp(customer, otpHash, expiresAt) {
 async function sendPasswordResetEmail(email, name, resetLink) {
   const mailer = getMailer();
   if (!mailer) return false;
-  const first = String(name || '').split(' ')[0] || 'there';
+  // escapeHtml the name before it goes into email HTML — a customer could set
+  // their name to markup, which would otherwise render/execute in the email.
+  const first = escapeHtml(String(name || '').split(' ')[0] || 'there');
   try {
     await mailer.sendMail({
       from: MAIL_FROM, to: email,
@@ -1195,7 +1216,7 @@ async function sendPasswordResetEmail(email, name, resetLink) {
 async function sendOtpEmail(email, name, otp) {
   const mailer = getMailer();
   if (!mailer) return false;
-  const first = String(name || '').split(' ')[0] || 'there';
+  const first = escapeHtml(String(name || '').split(' ')[0] || 'there');
   try {
     await mailer.sendMail({
       from: `"Tish Creations" <${(SMTP_URL.match(/\/\/([^:]+):/) || [])[1] || 'no-reply@tishcreations.in'}>`,
@@ -2212,10 +2233,15 @@ app.post('/api/customer/login', authLimiter, async (req, res) => {
   const email = emailKey(req.body?.email);
   const password = String(req.body?.password || '');
   if (!email || !password || password.length > MAX_PW_LEN) return res.status(400).json({ error: 'Email and password required' });
+  // Per-account lockout: complements the IP rate limit so credential-stuffing
+  // that rotates IPs against ONE account still gets stopped after 5 fails.
+  const lockLeft = loginLockLeft(email);
+  if (lockLeft > 0) return res.status(429).json({ error: `Too many failed attempts. Try again in ${Math.ceil(lockLeft / 60000)} minute(s), or reset your password.` });
   try {
     const c = await findCustomerByEmail(email);
     const ok = c && c.password_hash && await bcrypt.compare(password, c.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid email or password' });
+    if (!ok) { noteLoginFailure(email); return res.status(401).json({ error: 'Invalid email or password' }); }
+    clearLoginFailures(email);
     // Unverified account → refuse the session and (re)send the OTP so the
     // customer can finish verification right from the login screen.
     if (EMAIL_VERIFICATION_ON && c.email_verified === false) {
