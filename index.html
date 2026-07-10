@@ -471,6 +471,14 @@
     .free-bar{height:8px;border-radius:50px;background:#E6DAF7;overflow:hidden;margin-top:9px}
     .free-bar>span{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--gold-d));border-radius:50px;transition:width .55s var(--ease)}
     .gst-note{font-size:11px;color:var(--muted);text-align:center;margin-top:9px;letter-spacing:.02em}
+    .cart-pin{margin-top:12px;background:var(--cream);border:1px dashed var(--line);border-radius:12px;padding:11px 12px}
+    .cart-pin-row{display:flex;gap:8px}
+    .cart-pin-row input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-family:inherit;font-size:15px;background:#fff;color:var(--ink);outline:none}
+    .cart-pin-row input:focus{border-color:var(--gold-d)}
+    .cart-pin-row button{flex-shrink:0;background:var(--ink);color:var(--gold-l);border:none;border-radius:9px;padding:0 18px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+    .cart-pin-row button:hover{background:var(--gold-d);color:#fff}
+    .cart-pin-msg{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.5}
+    .cart-pin-msg.err{color:#C0392B}
     .btn-wa[disabled]{opacity:.45;cursor:not-allowed;background:var(--muted-l);color:#fff}
     .btn-wa[disabled]:hover{background:var(--muted-l);color:#fff}
     /* checkout form extras */
@@ -1889,10 +1897,10 @@
       h += '<div class="sum-line total"><span>Grand Total</span><b>'+inr(grandTotal())+'</b></div>';
     } else if (shipIsEstimate()){
       /* no pincode yet — DON'T show a misleading flat ₹ that then jumps up.
-         Ask for the pincode and keep the total honest ("subtotal + delivery"). */
-      h += '<div class="sum-line muted"><span>Shipping</span><span style="font-size:12px;font-style:italic">Enter pincode at checkout</span></div>';
+         Let them check the exact delivery right here, and keep the total honest. */
+      h += '<div class="sum-line muted"><span>Shipping</span><span style="font-size:12px;font-style:italic">Check with pincode ↓</span></div>';
       h += '<div class="sum-line total"><span>Grand Total</span><b>'+inr(sub)+'<small style="font-weight:500;color:var(--muted)"> + delivery</small></b></div>';
-      h += '<div class="gst-note">📍 Exact delivery is calculated live from your <b>pincode</b> at checkout (real Delhivery rate — no surprises). <b>FREE</b> on orders '+inr(fm)+'+.</div>';
+      h += '<div class="cart-pin"><div class="cart-pin-row"><input id="cartPin" inputmode="numeric" maxlength="6" placeholder="Enter delivery pincode" autocomplete="postal-code" value="'+esc(digits(form.pin))+'"><button data-cartpin>Check</button></div><div class="cart-pin-msg" id="cartPinMsg">📍 Get your exact delivery charge — <b>FREE</b> on orders '+inr(fm)+'+.</div></div>';
     } else {
       /* have a real live quote for this pincode */
       h += '<div class="sum-line muted"><span>Shipping</span><span>'+inr(ship)+'</span></div>';
@@ -2042,6 +2050,41 @@
       if (!form.pin && a.pincode) form.pin = a.pincode;
       if ($("#checkoutModal").classList.contains("open")) renderCheckout();
     } catch(e){}
+  }
+
+  /* Cart-drawer pincode check — lets a shopper see the exact delivery charge
+     BEFORE going to checkout. Reuses the same /api/check-pin + /api/shipping-price
+     endpoints as checkout, sets SHIP.quote, then re-renders the cart summary so
+     the real rate (or FREE) replaces "+ delivery". */
+  async function cartPinCheck(){
+    const el = document.getElementById("cartPin"), msg = document.getElementById("cartPinMsg");
+    const pin = digits(el ? el.value : "").slice(0,6);
+    if (!/^\d{6}$/.test(pin)){ if (msg){ msg.className = "cart-pin-msg err"; msg.textContent = "Please enter a valid 6-digit pincode"; } return; }
+    form.pin = pin;
+    if (!TC_CONFIG.apiEnabled){
+      if (msg){ msg.className = "cart-pin-msg"; msg.innerHTML = "✅ Est. delivery <b>" + estRange() + "</b> · exact rate shown at checkout <span style='color:var(--muted)'>(demo)</span>"; }
+      return;
+    }
+    if (msg){ msg.className = "cart-pin-msg"; msg.textContent = "⏳ Checking delivery to " + pin + "…"; }
+    SHIP.pin = pin; SHIP.mode = "prepaid";
+    try {
+      const s = await fetch(TC_CONFIG.backendUrl + "/api/check-pin?pin=" + pin);
+      const sd = await s.json().catch(()=>({}));
+      if (s.status === 400){ if (msg){ msg.className = "cart-pin-msg err"; msg.textContent = sd.error || "This pincode doesn't look right"; } return; }
+      const serviceable = sd.serviceable !== false;
+      SHIP.serviceable = serviceable; SHIP.city = sd.city || "";
+      if (!serviceable){ SHIP.quote = null; if (msg){ msg.className = "cart-pin-msg err"; msg.textContent = "😔 Sorry, we don't deliver to " + pin + " yet"; } return; }
+      SHIP.quote = null;
+      if (bagSum() < freeMin()){
+        const r = await fetch(TC_CONFIG.backendUrl + "/api/shipping-price", {
+          method:"POST", headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ dest_pin: pin, weight: estWeightKg(), cod:false })
+        });
+        const d = await r.json().catch(()=>({}));
+        if (r.ok && Number.isFinite(Number(d.total))) SHIP.quote = Math.round(Number(d.total));
+      }
+      refreshBagUI();  // switches the summary to the real rate / FREE
+    } catch(e){ if (msg){ msg.className = "cart-pin-msg err"; msg.textContent = "Couldn't check right now — you can still checkout"; } }
   }
 
   /* Serviceability + LIVE shipping rate — dono ek saath. Rate sirf tab
@@ -2447,6 +2490,9 @@
 
   /* open checkout from the (re-rendered) cart button */
   document.addEventListener("click", e=>{ if (e.target.closest("[data-checkout]")){ e.preventDefault(); openCheckout(); } });
+  // Cart-drawer pincode "Check" button + Enter key.
+  document.addEventListener("click", e=>{ if (e.target.closest("[data-cartpin]")){ e.preventDefault(); cartPinCheck(); } });
+  document.addEventListener("keydown", e=>{ if (e.key === "Enter" && e.target && e.target.id === "cartPin"){ e.preventDefault(); cartPinCheck(); } });
 
   /* pincode: 6 digit hote hi auto-check (debounced) — phone par button
      dhoondhne ki zaroorat nahi */
