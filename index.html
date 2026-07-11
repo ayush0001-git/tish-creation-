@@ -95,8 +95,9 @@
       --text:#463A28; --muted:#7E7259; --muted-l:#BBAE93;
       --line:#EADFC8; --line-dark:rgba(var(--gold-rgb),.20);
       --wa:#25D366;
-      --shadow:0 18px 50px rgba(44,34,18,.12); --shadow-lg:0 30px 80px rgba(44,34,18,.20);
-      --radius:18px; --ease:cubic-bezier(.22,.9,.28,1);
+      --shadow:0 1px 2px rgba(44,34,18,.05), 0 8px 22px rgba(44,34,18,.07);
+      --shadow-lg:0 4px 10px rgba(44,34,18,.06), 0 20px 48px rgba(44,34,18,.13);
+      --radius:16px; --ease:cubic-bezier(.22,.9,.28,1);
     }
     *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     html{scroll-behavior:smooth}
@@ -107,6 +108,10 @@
     button{font-family:inherit;cursor:pointer}
     section{scroll-margin-top:88px}
     ::selection{background:var(--gold);color:var(--ink)}
+    /* Keyboard focus ring — accessible + intentional. Only shows for keyboard
+       users (:focus-visible), so mouse clicks stay clean. */
+    :focus-visible{outline:2px solid var(--gold-d);outline-offset:2px;border-radius:3px}
+    a:focus:not(:focus-visible),button:focus:not(:focus-visible),input:focus:not(:focus-visible){outline:none}
     .wrap{width:min(1180px,92%);margin:0 auto}
 
     .eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:11px;font-weight:600;letter-spacing:.32em;text-transform:uppercase;color:var(--gold-d)}
@@ -120,8 +125,8 @@
     .sec-link:hover{color:var(--ink);border-color:var(--ink)}
 
     .btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:15px 28px;font-size:12.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;border:1px solid transparent;transition:all .35s var(--ease);border-radius:2px;text-align:center}
-    .btn-gold{background:linear-gradient(120deg,var(--gold-d) 0%,var(--gold) 55%,var(--gold-d) 100%);background-size:200% 100%;color:#211809;border-color:var(--gold)}
-    .btn-gold:hover{background-position:100% 0;transform:translateY(-2px);box-shadow:0 14px 30px rgba(var(--gold-rgb),.35)}
+    .btn-gold{background:linear-gradient(180deg,var(--gold) 0%,var(--gold-d) 100%);color:#211809;border-color:var(--gold-d)}
+    .btn-gold:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(var(--gold-rgb),.28);filter:brightness(1.04)}
     .btn-ghost{background:transparent;color:var(--ivory);border-color:rgba(var(--gold-l-rgb),.45)}
     .btn-ghost:hover{border-color:var(--gold);color:var(--gold-l)}
     .hero .btn-ghost{color:var(--gold-d);border-color:rgba(var(--gold-rgb),.5)}
@@ -138,7 +143,7 @@
     header.site{position:sticky;top:0;z-index:50;background:rgba(250,246,238,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line-dark);transition:background .4s var(--ease)}
     header.site.scrolled{background:rgba(250,246,238,.96);box-shadow:0 12px 40px rgba(44,34,18,.14)}
     .nav{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0}
-    .brand{display:flex;flex-direction:column;line-height:1;min-width:0}
+    .brand{display:flex;flex-direction:column;line-height:1;min-width:0;overflow:hidden}
     .brand .name{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;color:var(--ink);letter-spacing:.02em;white-space:nowrap}
     .brand .name em{font-style:italic;color:var(--gold-d)}
     .brand .sub{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--gold-d);margin-top:5px;font-weight:600;white-space:nowrap}
@@ -157,10 +162,19 @@
     .icon-btn.pop{animation:pop .4s var(--ease)}
     .hamburger{display:none}
     @media(max-width:1100px){.nav-links{display:none}.hamburger{display:flex}}
+    /* Below ~560px the brand tagline can't share the row with all 5 icons, so
+       hide the decorative sub-line — the brand name alone reads cleaner on mobile
+       (and never collides with the icon buttons). */
+    @media(max-width:560px){ .brand .sub{display:none} }
     @media(max-width:480px){
-      .brand .name{font-size:21px}.brand .sub{font-size:7.5px;letter-spacing:.22em}
-      .icon-btn{width:38px;height:38px}.icon-btn svg{width:17px;height:17px}
-      .nav-cta{gap:7px}.nav{padding:11px 0}
+      .brand .name{font-size:22px}
+      .icon-btn{width:37px;height:37px}.icon-btn svg{width:17px;height:17px}
+      .nav-cta{gap:6px}.nav{padding:11px 0;gap:8px}
+    }
+    @media(max-width:360px){
+      .brand .name{font-size:20px}
+      .icon-btn{width:34px;height:34px}.icon-btn svg{width:16px;height:16px}
+      .nav-cta{gap:4px}
     }
 
     /* search */
@@ -277,11 +291,11 @@
     .prod-grid>*{min-width:0}
     @media(max-width:1020px){.prod-grid{grid-template-columns:repeat(3,1fr)}}
     @media(max-width:760px){.prod-grid{grid-template-columns:repeat(2,1fr);gap:10px}}
-    .pcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;transition:transform .45s var(--ease),box-shadow .45s var(--ease);display:flex;flex-direction:column}
-    .pcard:hover{transform:translateY(-8px);box-shadow:var(--shadow-lg)}
+    .pcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;transition:transform .5s var(--ease),box-shadow .5s var(--ease),border-color .5s var(--ease);display:flex;flex-direction:column}
+    .pcard:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:rgba(var(--gold-rgb),.35)}
     .pmedia{position:relative;overflow:hidden;aspect-ratio:4/4.4;background:var(--cream)}
-    .pmedia img{width:100%;height:100%;object-fit:cover;transition:transform .9s var(--ease);background:var(--cream);color:transparent}
-    .pcard:hover .pmedia img{transform:scale(1.08)}
+    .pmedia img{width:100%;height:100%;object-fit:cover;transition:transform 1.1s var(--ease);background:var(--cream);color:transparent}
+    .pcard:hover .pmedia img{transform:scale(1.045)}
     .pbadge{position:absolute;top:10px;left:10px;z-index:3;background:var(--ink);color:var(--gold-l);font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;padding:6px 10px;border-radius:2px;border:1px solid rgba(var(--gold-l-rgb),.35)}
     .pwish{position:absolute;top:9px;right:9px;z-index:3;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.92);border:1px solid var(--line);font-size:15px;display:flex;align-items:center;justify-content:center;transition:transform .25s var(--ease)}
     .pwish:hover{transform:scale(1.12)}
@@ -693,6 +707,8 @@
     .trust-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
     .trust-it{display:flex;align-items:flex-start;gap:11px}
     .trust-it .ic{width:42px;height:42px;border-radius:12px;background:rgba(var(--gold-rgb),.12);display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0}
+    .trust-it .ic svg{width:20px;height:20px;stroke:var(--gold-d);fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+    @media(max-width:420px){.trust-it .ic svg{width:18px;height:18px}}
     .trust-it b{display:block;font-size:13px;color:var(--ink);letter-spacing:.02em}
     .trust-it span{font-size:11.5px;color:var(--muted);line-height:1.5}
     @media(max-width:900px){.trust-grid{grid-template-columns:1fr 1fr;gap:16px 12px}}
@@ -1083,10 +1099,10 @@
   <section class="trust-strip" aria-label="Why shop with Tish Creations">
     <div class="wrap">
       <div class="trust-grid">
-        <div class="trust-it reveal"><div class="ic">🚚</div><div><b>Free Shipping ₹1000+</b><span>Below that, only the actual courier charge — calculated live from your pincode.</span></div></div>
-        <div class="trust-it reveal" data-d="1"><div class="ic">🔒</div><div><b>Secure UPI &amp; COD</b><span>Pay with any UPI app or Cash on Delivery — whichever you prefer.</span></div></div>
-        <div class="trust-it reveal" data-d="2"><div class="ic">📦</div><div><b>Live Order Tracking</b><span>Track where your order is — real-time Delhivery status in your account.</span></div></div>
-        <div class="trust-it reveal" data-d="3"><div class="ic">💬</div><div><b>WhatsApp Support</b><span>Any question at all — we're just a message away, 7 days a week.</span></div></div>
+        <div class="trust-it reveal"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 3h13v13H1z"/><path d="M14 8h4l3 3v5h-7"/><circle cx="5.5" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/></svg></div><div><b>Free Shipping ₹1000+</b><span>Below that, only the actual courier charge — calculated live from your pincode.</span></div></div>
+        <div class="trust-it reveal" data-d="1"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 4v5c0 5-3.4 8.5-8 11-4.6-2.5-8-6-8-11V6z"/><path d="M9 12l2 2 4-4"/></svg></div><div><b>Secure UPI &amp; COD</b><span>Pay with any UPI app or Cash on Delivery — whichever you prefer.</span></div></div>
+        <div class="trust-it reveal" data-d="2"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></div><div><b>Live Order Tracking</b><span>Track where your order is — real-time Delhivery status in your account.</span></div></div>
+        <div class="trust-it reveal" data-d="3"><div class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.8-.8L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg></div><div><b>WhatsApp Support</b><span>Any question at all — we're just a message away, 7 days a week.</span></div></div>
       </div>
     </div>
   </section>
