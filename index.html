@@ -48,14 +48,16 @@
 
   <!-- ==========================================================================
        CONFIG — only these 1-2 things may need to be changed by the owner:
-       • googleClientId → Paste your OAuth "Web client" ID from Google Cloud Console
-         (enables Google login). Also set GOOGLE_CLIENT_ID in Railway env.
+       • googleClientId → falls back to the hard-coded value below for local /
+         standalone previews. On the live site the server's /api/config response
+         overrides this (set GOOGLE_CLIENT_ID in Railway env to control it from
+         one place — no HTML edits needed).
        • backendUrl auto-detects (works automatically on Railway).
        ========================================================================== -->
   <script>
     const TC_CONFIG = {
       backendUrl: (location.protocol === 'http:' || location.protocol === 'https:') ? location.origin : "",
-      googleClientId: "",   /* ← Paste Google OAuth Web Client ID here */
+      googleClientId: "320698284225-au6um6f8k9ecmjbongq387hhcdgglj24.apps.googleusercontent.com",   /* OAuth "Web client" ID */
       gaId: "",             /* ← Paste your GA4 Measurement ID here, e.g. "G-XXXXXXXXXX" (analytics only load after cookie consent) */
       metaPixelId: "",      /* ← Paste your Meta (Facebook) Pixel ID here, e.g. "123456789012345" */
       get apiEnabled() { return !!this.backendUrl; }
@@ -69,8 +71,14 @@
       if (!TC_CONFIG.apiEnabled) return;
       try {
         const r = await fetch(TC_CONFIG.backendUrl + "/api/config", { credentials:"include" });
-        if (r.ok){ const d = await r.json(); Object.assign(SERVER_CFG, d); }
-      } catch(e){ /* keep safe defaults */ }
+        if (r.ok){
+          const d = await r.json();
+          Object.assign(SERVER_CFG, d);
+          // Prefer the server's value when it's set — that way the owner only
+          // has to configure GOOGLE_CLIENT_ID in Railway (no HTML re-deploy).
+          if (d && d.googleClientId) TC_CONFIG.googleClientId = d.googleClientId;
+        }
+      } catch(e) { /* keep safe defaults */ }
       // Owner-uploaded photos (hero/banner/category) saved on the server —
       // paint them live so every visitor sees the latest, no redeploy needed.
       try {
@@ -100,10 +108,10 @@
       --radius:16px; --ease:cubic-bezier(.22,.9,.28,1);
     }
     *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-    html{scroll-behavior:smooth}
-    body{max-width:100%;overflow-x:hidden}
+    html{scroll-behavior:smooth;overflow-x:hidden;width:100%}
+    body{max-width:100%;overflow-x:hidden;width:100%;position:relative}
     body{font-family:'Outfit',system-ui,sans-serif;background:var(--ivory);color:var(--text);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
-    img{display:block;max-width:100%}
+    img{display:block;max-width:100%;height:auto}
     a{color:inherit;text-decoration:none}
     button{font-family:inherit;cursor:pointer}
     section{scroll-margin-top:88px}
@@ -256,6 +264,14 @@
       .float-card .big{font-size:15px}
       .stat + .stat{padding-left:18px}
     }
+    /* Phone: stack the hero stats vertically so they never force horizontal
+       overflow (3 of them at desktop gaps won't fit in a 360px viewport). */
+    @media(max-width:540px){
+      .hero-stats{gap:14px;row-gap:14px}
+      .stat + .stat{padding-left:0;border-left:none;padding-top:12px;border-top:1px solid var(--line)}
+      .hero-ctas{flex-direction:column;align-items:stretch;gap:10px}
+      .hero-ctas .btn{width:100%}
+    }
 
     /* ---------- marquee ---------- */
     .marquee{background:var(--cream);border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow:hidden;padding:15px 0}
@@ -272,10 +288,33 @@
     .sec.dark::before{content:"";position:absolute;right:-10%;top:-20%;width:55%;height:120%;background:radial-gradient(ellipse at center,rgba(var(--gold-rgb),.12),transparent 60%);pointer-events:none}
     .sec.dark .h2{color:var(--ink)} .sec.dark .eyebrow{color:var(--gold-d)}
 
-    /* categories */
-    .cat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:16px}
+    /* categories — horizontal swipeable carousel (works with finger or wheel)
+       Shows ~4 cards on desktop, ~2.5 on tablet, ~1.4 on phone so the next
+       card peeks in from the right and invites a swipe. */
+    .cat-grid{
+      display:grid;
+      grid-auto-flow:column;
+      grid-auto-columns:calc((100% - 3 * 16px) / 4);
+      gap:16px;
+      overflow-x:auto;
+      overflow-y:hidden;
+      scroll-snap-type:x mandatory;
+      scroll-behavior:smooth;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-width:none;          /* Firefox */
+      -ms-overflow-style:none;       /* legacy Edge */
+      padding:4px 0 10px;            /* room for shadow + a tiny breathing space */
+      /* Fade edges so the user sees there's more to scroll */
+      mask-image:linear-gradient(90deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+      -webkit-mask-image:linear-gradient(90deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+    }
+    .cat-grid::-webkit-scrollbar{display:none;height:0}    /* Chrome / Safari */
     .cat-grid>*{min-width:0}
-    .cat-card{position:relative;border-radius:150px 150px 14px 14px;overflow:hidden;aspect-ratio:3/4.1;box-shadow:var(--shadow);animation:cardIn .6s var(--ease) both}
+    .cat-card{
+      position:relative;border-radius:150px 150px 14px 14px;overflow:hidden;
+      aspect-ratio:3/4.1;box-shadow:var(--shadow);animation:cardIn .6s var(--ease) both;
+      scroll-snap-align:start;
+    }
     .cat-card img{width:100%;height:100%;object-fit:cover;transition:transform 1s var(--ease);background:var(--cream)}
     .cat-card::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(44,27,82,.82) 0%,rgba(44,27,82,.05) 55%)}
     .cat-card:hover img{transform:scale(1.1)}
@@ -283,8 +322,21 @@
     .cat-info h3{font-size:20px;color:var(--ivory);font-weight:500;overflow-wrap:break-word}
     .cat-info .explore{display:inline-block;margin-top:5px;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold-l);opacity:0;transform:translateY(8px);transition:all .45s var(--ease);font-weight:600}
     .cat-card:hover .explore{opacity:1;transform:translateY(0)}
-    @media(max-width:1020px){.cat-grid{grid-template-columns:repeat(3,1fr)}}
-    @media(max-width:640px){.cat-grid{grid-template-columns:repeat(2,1fr);gap:10px}.cat-card{border-radius:100px 100px 12px 12px}.cat-info h3{font-size:17px}}
+    /* Tablet: ~2.5 cards visible at once */
+    @media(max-width:1020px){
+      .cat-grid{grid-auto-columns:calc((100% - 2 * 14px) / 2.5);gap:14px}
+    }
+    /* Phone: 1.3–1.4 cards visible so the next one clearly peeks in from the right */
+    @media(max-width:640px){
+      .cat-grid{grid-auto-columns:calc((100% - 1 * 10px) / 1.4);gap:10px}
+      .cat-card{border-radius:100px 100px 12px 12px}
+      .cat-info h3{font-size:17px}
+      .cat-info{padding:14px 8px}
+    }
+    /* Small phones — slightly wider peek so the next card is unmistakable */
+    @media(max-width:380px){
+      .cat-grid{grid-auto-columns:calc((100% - 1 * 10px) / 1.25)}
+    }
 
     /* product cards */
     .prod-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
@@ -518,6 +570,8 @@
     .modal-card h3 em{color:var(--gold-d)}
     .modal-card .msub{font-size:12px;color:var(--muted);letter-spacing:.06em;margin-bottom:22px}
     .gsi-holder{display:flex;justify-content:center;min-height:44px;margin:8px 0}
+    .gsi-holder.gsi-top{justify-content:stretch;margin:4px 0 6px}
+    .gsi-holder.gsi-top>div,.gsi-holder.gsi-top>iframe{width:100% !important;max-width:100%}
     .acct-note{font-size:12px;color:var(--muted);line-height:1.7;background:var(--cream);border:1px dashed var(--line);border-radius:10px;padding:12px}
     .acct-user img{width:64px;height:64px;border-radius:50%;object-fit:cover;margin:0 auto 12px;border:2px solid var(--gold-l);background:var(--cream)}
     .acct-user .un{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600}
@@ -1486,11 +1540,14 @@
   "bannerP": "Curated hampers, hand-tied bouquets and ready-to-gift combos — each one packed with care and a personalised note, delivered to their doorstep.",
   "footBlurb": "Trendy & affordable jewellery, hair accessories, gift hampers and stationery — delivered across India. Because every day deserves a little sparkle.",
   "cats": [
-   { "name": "Jewellery", "filter": "jewelry", "img": "https://images.unsplash.com/photo-1601121141461-9d6647bef0a1?w=600&q=80&fit=crop" },
-   { "name": "Hair Claws", "filter": "hair-claws", "img": "https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=600&q=80&fit=crop" },
+   { "name": "Jewellery",     "filter": "jewelry",          "img": "https://images.unsplash.com/photo-1601121141461-9d6647bef0a1?w=600&q=80&fit=crop" },
+   { "name": "Hair Claws",    "filter": "hair-claws",       "img": "https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=600&q=80&fit=crop" },
+   { "name": "Hair Ties",     "filter": "hair-ties",        "img": "https://images.unsplash.com/photo-1598371839696-5c5bb00bdc28?w=600&q=80&fit=crop" },
    { "name": "Hair Accessories", "filter": "hair-accessories", "img": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=600&q=80&fit=crop" },
-   { "name": "Hampers", "filter": "bouquet-hampers", "img": "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=600&q=80&fit=crop" },
-   { "name": "Stationery", "filter": "stationery", "img": "https://images.unsplash.com/photo-1531346878377-a5be20888e57?w=600&q=80&fit=crop" }
+   { "name": "Utility",       "filter": "utility",          "img": "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=600&q=80&fit=crop" },
+   { "name": "Bouquet & Hampers", "filter": "bouquet-hampers", "img": "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=600&q=80&fit=crop" },
+   { "name": "Stationery",    "filter": "stationery",       "img": "https://images.unsplash.com/photo-1531346878377-a5be20888e57?w=600&q=80&fit=crop" },
+   { "name": "Combos",        "filter": "combo",            "img": "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?w=600&q=80&fit=crop" }
   ],
   "tests": [
    { "q": "Ordered the birthday hamper for my best friend — the packing was so pretty she didn't want to open it. Everything felt so thoughtfully put together.", "who": "Ananya S.", "meta": "Gift Hamper · Delhi" },
@@ -2752,23 +2809,35 @@
       }
       if (!TC_CONFIG.apiEnabled){
         acctSub("Account requires the server");
-        body.innerHTML = '<div class="acct-note" style="margin-bottom:12px">This preview is running <b>without a server</b>, so real sign-in is currently off. Save your name/email here — it will auto-fill at checkout. (Full account + order history works on the live site.)</div>'
+        // Google button still works in demo mode (creates a local-only session)
+        // so you can test the flow without the live server. The local fallback
+        // in onGoogleCredential() handles this — no API call needed.
+        const gsiDemo = TC_CONFIG.googleClientId
+          ? '<div class="gsi-holder gsi-top" id="gsiHolder"></div><div class="af-div">or continue with email</div>' : "";
+        body.innerHTML = gsiDemo
+          + '<div class="acct-note" style="margin-bottom:12px">This preview is running <b>without a server</b>, so real sign-in is currently off. Save your name/email here — it will auto-fill at checkout. (Full account + order history works on the live site.)</div>'
           + af("g_name","Your name","e.g. Priya Sharma")
           + af("g_email","Your email","you@email.com","email")
           + '<button class="af-btn" data-ac="do-guest" data-primary>Save for checkout</button>'
           + '<div class="af-foot"><button class="af-link" data-ac="guest-track">📦 Track an order</button></div>';
+        if (TC_CONFIG.googleClientId) initGoogle(document.getElementById("gsiHolder"));
         return;
       }
       const isSignup = ACCT.view === "signup";
       acctSub(isSignup ? "Create your account in 2 minutes — order history + easy tracking" : "Sign in for order history & tracking");
-      body.innerHTML = authTabsHTML()
+      // Google button first — the easiest option for most customers, no password
+      // to remember. The "or continue with email" divider separates it from the
+      // classic email/password form below.
+      const gsiTop = TC_CONFIG.googleClientId
+        ? '<div class="gsi-holder gsi-top" id="gsiHolder"></div><div class="af-div">or continue with email</div>' : "";
+      body.innerHTML = gsiTop
+        + authTabsHTML()
         + (isSignup ? af("au_name","Full name","e.g. Priya Sharma") : "")
         + af("au_email","Email address","you@email.com","email")
         + af("au_pw", isSignup ? "Create password (8+ characters)" : "Password","••••••••","password")
         + '<button class="af-btn" data-ac="'+(isSignup?"do-signup":"do-login")+'" data-primary>'+(isSignup?"Create my account ✨":"Sign in")+'</button>'
         + (isSignup ? "" : '<div class="af-foot"><button class="af-link" data-ac="forgot">Forgot password?</button></div>')
-        + '<div class="af-foot"><button class="af-link" data-ac="guest-track">📦 Track an order (without login)</button></div>'
-        + (TC_CONFIG.googleClientId ? '<div class="af-div">ya</div><div class="gsi-holder" id="gsiHolder"></div>' : "");
+        + '<div class="af-foot"><button class="af-link" data-ac="guest-track">📦 Track an order (without login)</button></div>';
       if (TC_CONFIG.googleClientId) initGoogle(document.getElementById("gsiHolder"));
       return;
     }
@@ -3076,7 +3145,13 @@
     const render = ()=>{
       try {
         window.google.accounts.id.initialize({ client_id: cid, callback: onGoogleCredential });
-        window.google.accounts.id.renderButton(holder, { theme:"outline", size:"large", shape:"pill", width:280, text:"signin_with" });
+        // Top-of-modal button: full width, "Continue with Google" reads more
+        // naturally for new visitors. Falls back to the smaller pill style when
+        // the button is rendered lower in the form.
+        const isTop = holder.classList.contains("gsi-top");
+        window.google.accounts.id.renderButton(holder, isTop
+          ? { theme:"outline", size:"large", shape:"pill", width:360, text:"continue_with", logo_alignment:"left" }
+          : { theme:"outline", size:"large", shape:"pill", width:280, text:"signin_with" });
       } catch(e){ toast("Google button could not load — try refreshing the page"); }
     };
     if (window.google && window.google.accounts && window.google.accounts.id) return render();

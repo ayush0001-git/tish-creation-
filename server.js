@@ -1504,10 +1504,14 @@ app.post('/api/csp-report',
 
 // Public, non-sensitive runtime config the storefront reads at boot so the UI
 // always matches server policy (e.g. hide the COD option when COD is off).
+// googleClientId is a PUBLIC identifier (it identifies the OAuth app to Google
+// — not a secret). Serving it from the server means the owner can configure it
+// in one place (Railway env: GOOGLE_CLIENT_ID) and never has to edit the HTML.
 app.get('/api/config', (_req, res) => res.json({
   allowCod: ALLOW_COD_ENABLED,
   emailVerification: EMAIL_VERIFICATION_ON,
   loginRequiredToOrder: false,   // guest checkout is enabled (name+email+phone) — matches the FAQ
+  googleClientId: GOOGLE_CLIENT_ID || "",
   payments: {
     phonepe: PHONEPE_ON,
     razorpay: !!(Razorpay && RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET),
