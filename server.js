@@ -82,13 +82,13 @@ const rateLimit = require('express-rate-limit');
 
 // Optional dependencies — loaded defensively so the server boots before they're configured.
 let Razorpay = null; try { Razorpay = require('razorpay'); } catch { /* optional */ }
-let Pool = null;     try { ({ Pool } = require('pg')); } catch { /* optional */ }
-let OpenAI = null;   try { OpenAI = require('openai'); } catch { /* optional */ }
+let Pool = null; try { ({ Pool } = require('pg')); } catch { /* optional */ }
+let OpenAI = null; try { OpenAI = require('openai'); } catch { /* optional */ }
 let PgSession = null; try { PgSession = require('connect-pg-simple')(session); } catch { /* optional */ }
 let GoogleAuthClient = null; try { ({ OAuth2Client: GoogleAuthClient } = require('google-auth-library')); } catch { /* optional: run `npm install` to enable "Sign in with Google" */ }
-let axios = null;    try { axios = require('axios'); } catch { /* optional: shipping lookups degrade to demo */ }
+let axios = null; try { axios = require('axios'); } catch { /* optional: shipping lookups degrade to demo */ }
 let nodemailer = null; try { nodemailer = require('nodemailer'); } catch { /* optional: order emails */ }
-let QRCode = null;   try { QRCode = require('qrcode'); } catch { /* optional: UPI QR codes */ }
+let QRCode = null; try { QRCode = require('qrcode'); } catch { /* optional: UPI QR codes */ }
 
 const {
   PORT = 3001,
@@ -186,14 +186,14 @@ function fatal(msg) { console.error(`\n🛑 BOOT BLOCKED: ${msg}\n`); process.ex
 if (isProd) {
   if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
     fatal('SESSION_SECRET must be set to a strong random value (>=32 chars) in production.\n' +
-          '   Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
+      '   Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
   }
   if (!ADMIN_PASSWORD_HASH) {
     fatal('ADMIN_PASSWORD_HASH must be set in production.\n   Generate it with: node server.js hash-password');
   }
   if (!PG_URL || !Pool) {
     fatal('DATABASE_URL (PostgreSQL) is required in production — the in-memory demo store is not persistent or safe.\n' +
-          '   It must start with postgres:// or postgresql://');
+      '   It must start with postgres:// or postgresql://');
   }
 }
 
@@ -732,15 +732,15 @@ async function initDb() {
    ids + prices) so the amount the server charges matches the amount the storefront
    shows, and so any product a customer can add to the cart actually validates. */
 const SEED_PRODUCTS = [
-  { id: 'p1',  name: 'Premium Hair Claw Clips Set (Pack of 12)', category: 'hair-claws', price: 240, originalPrice: 400, image: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=400&q=80&fit=crop', inStock: true, description: 'Premium quality hair claw clips in assorted trendy colors. Perfect for retail or salon use. Pack of 12 pieces.' },
-  { id: 'p2',  name: 'Satin Scrunchie Set (Pack of 12)', category: 'hair-accessories', price: 168, originalPrice: 300, image: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&q=80&fit=crop', inStock: true, description: 'Silky satin scrunchies in beautiful pastel colors. Gentle on hair and stylish for all occasions. Pack of 12.' },
-  { id: 'p3',  name: 'Pearl Hair Ties Bundle (Pack of 12)', category: 'hair-ties', price: 156, originalPrice: 250, image: 'https://images.unsplash.com/photo-1598371839696-5c5bb00bdc28?w=400&q=80&fit=crop', inStock: true, description: 'Elegant pearl-finish hair ties. Soft elastic with decorative pearl charm. A bestselling retail product.' },
-  { id: 'p4',  name: 'Funky Statement Brooches Set - UBK3168', category: 'jewelry', price: 69, originalPrice: 500, image: 'https://images.unsplash.com/photo-1574180045827-681f8a1a9622?w=400&q=80&fit=crop', inStock: true, description: 'Funky enamel statement brooches with ghost, pagoda and landmark designs. 5 unique pins per set. From Rs.69 only!' },
-  { id: 'p5',  name: 'Enamel Cute Pins Set - UBK3451', category: 'jewelry', price: 49, originalPrice: 120, image: 'https://images.unsplash.com/photo-1602752250015-52934bc45613?w=400&q=80&fit=crop', inStock: true, description: 'Adorable enamel cute pins set with letters A-O, floral and dainty designs. Great for bags and jackets.' },
-  { id: 'p6',  name: 'Korean Style Mini Fur Hair Claw - UBK2823', category: 'hair-claws', price: 39, originalPrice: 50, image: 'https://images.unsplash.com/photo-1547887537-6158d64c35b3?w=400&q=80&fit=crop', inStock: true, description: 'Trendy Korean style mini fur hair claws in fluffy pastel shades. White, pink, beige, black and more. Super cute.' },
-  { id: 'p7',  name: 'Floral Printed Bow Hair Clip - UBK3864', category: 'hair-accessories', price: 29, originalPrice: 50, image: 'https://images.unsplash.com/photo-1616684000067-36952fde56ec?w=400&q=80&fit=crop', inStock: true, description: 'Pretty floral printed bow hair clips in pastel tones. Lightweight and easy to wear. Pairs with every outfit.' },
-  { id: 'p8',  name: 'Mini Spiral Hair Bow Set of 5 - UBK1071', category: 'hair-ties', price: 39, originalPrice: null, image: 'https://images.unsplash.com/photo-1615454782842-e45e01699c4d?w=400&q=80&fit=crop', inStock: true, description: 'Adorable mini spiral hair bows in a set of 5 assorted colors. No crease, comfortable elastic. Everyday styling.' },
-  { id: 'p9',  name: 'Velvet Headband Set (Pack of 12)', category: 'hair-accessories', price: 360, originalPrice: 600, image: 'https://images.unsplash.com/photo-1556760544-74068565f05c?w=400&q=80&fit=crop', inStock: true, description: 'Luxurious velvet headbands with padded design for comfort. Ideal for beauty salons and retail stores.' },
+  { id: 'p1', name: 'Premium Hair Claw Clips Set (Pack of 12)', category: 'hair-claws', price: 240, originalPrice: 400, image: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=400&q=80&fit=crop', inStock: true, description: 'Premium quality hair claw clips in assorted trendy colors. Perfect for retail or salon use. Pack of 12 pieces.' },
+  { id: 'p2', name: 'Satin Scrunchie Set (Pack of 12)', category: 'hair-accessories', price: 168, originalPrice: 300, image: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&q=80&fit=crop', inStock: true, description: 'Silky satin scrunchies in beautiful pastel colors. Gentle on hair and stylish for all occasions. Pack of 12.' },
+  { id: 'p3', name: 'Pearl Hair Ties Bundle (Pack of 12)', category: 'hair-ties', price: 156, originalPrice: 250, image: 'https://images.unsplash.com/photo-1598371839696-5c5bb00bdc28?w=400&q=80&fit=crop', inStock: true, description: 'Elegant pearl-finish hair ties. Soft elastic with decorative pearl charm. A bestselling retail product.' },
+  { id: 'p4', name: 'Funky Statement Brooches Set - UBK3168', category: 'jewelry', price: 69, originalPrice: 500, image: 'https://images.unsplash.com/photo-1574180045827-681f8a1a9622?w=400&q=80&fit=crop', inStock: true, description: 'Funky enamel statement brooches with ghost, pagoda and landmark designs. 5 unique pins per set. From Rs.69 only!' },
+  { id: 'p5', name: 'Enamel Cute Pins Set - UBK3451', category: 'jewelry', price: 49, originalPrice: 120, image: 'https://images.unsplash.com/photo-1602752250015-52934bc45613?w=400&q=80&fit=crop', inStock: true, description: 'Adorable enamel cute pins set with letters A-O, floral and dainty designs. Great for bags and jackets.' },
+  { id: 'p6', name: 'Korean Style Mini Fur Hair Claw - UBK2823', category: 'hair-claws', price: 39, originalPrice: 50, image: 'https://images.unsplash.com/photo-1547887537-6158d64c35b3?w=400&q=80&fit=crop', inStock: true, description: 'Trendy Korean style mini fur hair claws in fluffy pastel shades. White, pink, beige, black and more. Super cute.' },
+  { id: 'p7', name: 'Floral Printed Bow Hair Clip - UBK3864', category: 'hair-accessories', price: 29, originalPrice: 50, image: 'https://images.unsplash.com/photo-1616684000067-36952fde56ec?w=400&q=80&fit=crop', inStock: true, description: 'Pretty floral printed bow hair clips in pastel tones. Lightweight and easy to wear. Pairs with every outfit.' },
+  { id: 'p8', name: 'Mini Spiral Hair Bow Set of 5 - UBK1071', category: 'hair-ties', price: 39, originalPrice: null, image: 'https://images.unsplash.com/photo-1615454782842-e45e01699c4d?w=400&q=80&fit=crop', inStock: true, description: 'Adorable mini spiral hair bows in a set of 5 assorted colors. No crease, comfortable elastic. Everyday styling.' },
+  { id: 'p9', name: 'Velvet Headband Set (Pack of 12)', category: 'hair-accessories', price: 360, originalPrice: 600, image: 'https://images.unsplash.com/photo-1556760544-74068565f05c?w=400&q=80&fit=crop', inStock: true, description: 'Luxurious velvet headbands with padded design for comfort. Ideal for beauty salons and retail stores.' },
   { id: 'p10', name: 'Printed Zipper Pouches (Pack of 50)', category: 'utility', price: 350, originalPrice: 500, image: 'https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=400&q=80&fit=crop', inStock: true, description: 'Multi-purpose printed zipper pouches. Perfect for gifting, packing accessories, or retail display.' },
   { id: 'p11', name: 'Makeup Sponge Set with Case (Pack of 12)', category: 'utility', price: 360, originalPrice: 500, image: 'https://images.unsplash.com/photo-1560750588-73207b1ef5b8?w=400&q=80&fit=crop', inStock: true, description: 'Professional-grade makeup sponges with individual cases. Must-have for beauty retailers.' },
   { id: 'p12', name: 'Velvet Jewellery Box Set (Pack of 3)', category: 'jewelry', price: 630, originalPrice: 900, image: 'https://images.unsplash.com/photo-1601121141461-9d6647bef0a1?w=400&q=80&fit=crop', inStock: true, description: 'Premium velvet jewellery storage boxes. Elegant display case for rings, earrings, and necklaces.' },
@@ -771,8 +771,8 @@ async function seedProductsIfEmpty() {
           `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
           [p.id, p.name, p.category, p.price,
-           Number.isFinite(Number(p.originalPrice)) ? Number(p.originalPrice) : null,
-           p.image, p.inStock !== false, p.description]
+          Number.isFinite(Number(p.originalPrice)) ? Number(p.originalPrice) : null,
+          p.image, p.inStock !== false, p.description]
         );
       }
       await client.query('COMMIT');
@@ -828,6 +828,7 @@ app.use(helmet({
       reportUri: ['/api/csp-report'],
     },
   },
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
   crossOriginResourcePolicy: { policy: 'same-origin' },
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   hsts: isProd ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
@@ -1028,7 +1029,7 @@ const regenerateSession = (req) => new Promise((resolve, reject) => {
 // Prevent shared caches / proxies from storing authenticated or order data.
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/admin') || req.path.startsWith('/api/customer') ||
-      req.path.startsWith('/api/orders') || req.path.startsWith('/api/payment')) {
+    req.path.startsWith('/api/orders') || req.path.startsWith('/api/payment')) {
     res.set('Cache-Control', 'no-store');
   }
   next();
@@ -1280,10 +1281,10 @@ async function createOrder(o) {
       `INSERT INTO orders (id, customer_id, mode, subtotal, shipping_fee, discount, total, status, payment_mode, payment_status, shipping_pincode, customer_name, customer_phone, customer_email, shipping_address, guest_token, coupon_code)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [o.id, o.customer_id || null, o.mode || 'retail', o.subtotal || 0, o.shipping_fee || 0, o.discount || 0, o.total || 0,
-       o.status || 'pending', o.payment_mode || 'cod', o.payment_status || 'pending', o.shipping_pincode || null,
-       o.customer_name || null, o.customer_phone || null, o.customer_email || null,
-       o.shipping_address ? JSON.stringify(o.shipping_address) : null,
-       o.guest_token || null, o.coupon_code || null]);
+      o.status || 'pending', o.payment_mode || 'cod', o.payment_status || 'pending', o.shipping_pincode || null,
+      o.customer_name || null, o.customer_phone || null, o.customer_email || null,
+      o.shipping_address ? JSON.stringify(o.shipping_address) : null,
+      o.guest_token || null, o.coupon_code || null]);
     for (const it of (o.items || [])) {
       await client.query('INSERT INTO order_items (order_id, product_id, qty, unit_price) VALUES ($1,$2,$3,$4)',
         [o.id, String(it.id), Math.max(1, parseInt(it.qty, 10) || 1), Number(it.price) || 0]);
@@ -1381,7 +1382,7 @@ const PP_BASE = PHONEPE_BASE_URL ||
   (PP_IS_PROD ? 'https://api.phonepe.com/apis/pg' : 'https://api-preprod.phonepe.com/apis/pg-sandbox');
 const PP_AUTH = PHONEPE_AUTH_URL ||
   (PP_IS_PROD ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'
-              : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token');
+    : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token');
 
 // OAuth token cache — PhonePe tokens live ~1h; refresh 60s before expiry.
 let _ppToken = null, _ppTokenExp = 0;
@@ -1544,7 +1545,7 @@ app.post('/api/products', requireAdmin, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8`,
       [id, name, category, price, Number.isFinite(Number(b.originalPrice)) ? Number(b.originalPrice) : null,
-       b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000)]
+        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000)]
     );
     res.json({ ok: true, id });
   } catch (e) { console.error('save product:', e.message); res.status(500).json({ error: 'Could not save product' }); }
@@ -2157,8 +2158,10 @@ app.post('/api/customer/register', authLimiter, async (req, res) => {
       if (!stored.name) stored.name = name;
       const sent = await issueEmailOtp(stored);
       if (!sent) return res.status(502).json({ error: 'We could not send the verification email. Please try again in a minute.' });
-      return res.json({ ok: true, needsVerification: true, email,
-        message: 'We emailed you a 6-digit verification code. Enter it to activate your account.' });
+      return res.json({
+        ok: true, needsVerification: true, email,
+        message: 'We emailed you a 6-digit verification code. Enter it to activate your account.'
+      });
     }
     try {
       await regenerateSession(req);
@@ -2293,14 +2296,16 @@ app.get('/api/customer/profile', requireCustomer, async (req, res) => {
   try {
     const c = await findCustomerById(req.session.customerId);
     if (!c) return res.status(404).json({ error: 'Account not found' });
-    res.json({ profile: {
-      id: c.id, name: c.name || '', email: c.email || '', phone: c.phone || '',
-      address: c.address || null,
-      emailVerified: c.email_verified !== false,
-      hasPassword: !!c.password_hash,
-      googleLinked: !!c.google_sub,
-      memberSince: c.created_at || null,
-    }});
+    res.json({
+      profile: {
+        id: c.id, name: c.name || '', email: c.email || '', phone: c.phone || '',
+        address: c.address || null,
+        emailVerified: c.email_verified !== false,
+        hasPassword: !!c.password_hash,
+        googleLinked: !!c.google_sub,
+        memberSince: c.created_at || null,
+      }
+    });
   } catch (e) { console.error('profile get:', e.message); res.status(500).json({ error: 'Could not load profile' }); }
 });
 
@@ -2494,8 +2499,8 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
   // database call hangs — the entire site goes down. This helper fixes all 3.
   const releaseTx = async () => {
     if (txClient) {
-      try { await txClient.query('ROLLBACK'); } catch {} // safe even if already committed
-      try { txClient.release(); } catch {}
+      try { await txClient.query('ROLLBACK'); } catch { } // safe even if already committed
+      try { txClient.release(); } catch { }
       txClient = null;
     }
   };
@@ -2589,10 +2594,10 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
           `INSERT INTO orders (id, customer_id, mode, subtotal, shipping_fee, discount, total, status, payment_mode, payment_status, shipping_pincode, customer_name, customer_phone, customer_email, shipping_address, guest_token, coupon_code)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [order.id, order.customer_id || null, order.mode || 'retail', order.subtotal || 0, order.shipping_fee || 0, order.discount || 0, order.total || 0,
-           order.status || 'pending', order.payment_mode || 'cod', order.payment_status || 'pending', order.shipping_pincode || null,
-           order.customer_name || null, order.customer_phone || null, order.customer_email || null,
-           order.shipping_address ? JSON.stringify(order.shipping_address) : null,
-           order.guest_token || null, order.coupon_code || null]);
+          order.status || 'pending', order.payment_mode || 'cod', order.payment_status || 'pending', order.shipping_pincode || null,
+          order.customer_name || null, order.customer_phone || null, order.customer_email || null,
+          order.shipping_address ? JSON.stringify(order.shipping_address) : null,
+          order.guest_token || null, order.coupon_code || null]);
         for (const it of (order.items || [])) {
           await txClient.query('INSERT INTO order_items (order_id, product_id, qty, unit_price) VALUES ($1,$2,$3,$4)',
             [order.id, String(it.id), Math.max(1, parseInt(it.qty, 10) || 1), Number(it.price) || 0]);
@@ -2604,7 +2609,7 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
       } catch (e) {
         // INSERT failed — rollback + release. txClient is guaranteed non-null here
         // because we only enter this block when it was set.
-        try { await txClient.query('ROLLBACK'); } catch {}
+        try { await txClient.query('ROLLBACK'); } catch { }
         txClient.release();
         txClient = null;
         throw e;
@@ -2641,7 +2646,7 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
       sendOwnerOrderNotification(order).catch(e => console.error('owner notify bg:', e.message));
     }
     // They ordered — clear any pending abandoned-cart reminder for this contact.
-    markCartConverted(custEmail || c.email, c.phone).catch(() => {});
+    markCartConverted(custEmail || c.email, c.phone).catch(() => { });
     res.json({
       ok: true, orderId: order.id, status: order.status, total: order.total,
       guestToken, couponError,
@@ -2692,8 +2697,8 @@ app.post('/api/orders/:id/cancel', orderLimiter, requireCustomer, async (req, re
     // Let the owner know so they don't pack it (best-effort).
     try {
       const fresh = await getOrderById(orderId);
-      if (fresh) { fresh.status = 'cancelled'; sendOwnerOrderNotification({ ...fresh, items: await getOrderItems(orderId) }).catch(() => {}); }
-    } catch (e) {}
+      if (fresh) { fresh.status = 'cancelled'; sendOwnerOrderNotification({ ...fresh, items: await getOrderItems(orderId) }).catch(() => { }); }
+    } catch (e) { }
     res.json({ ok: true, status: 'cancelled' });
   } catch (e) { console.error('cancel order:', e.message); res.status(500).json({ error: 'Could not cancel the order' }); }
 });
@@ -2852,7 +2857,7 @@ app.post('/api/admin/coupons', requireAdmin, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (code) DO UPDATE SET description=$2, kind=$3, value=$4, min_subtotal=$5, max_uses=$6, expires_at=$7, active=$8`,
       [code, String(b.description || '').slice(0, 300), kind, value, minSubtotal, maxUses,
-       b.expiresAt ? new Date(b.expiresAt) : null, b.active !== false]
+        b.expiresAt ? new Date(b.expiresAt) : null, b.active !== false]
     );
     res.json({ ok: true, code });
   } catch (e) { console.error('save coupon:', e.message); res.status(500).json({ error: 'Could not save coupon' }); }
@@ -2894,7 +2899,7 @@ app.post('/api/cart/save', orderLimiter, async (req, res) => {
        ON CONFLICT (contact_key) DO UPDATE SET email=$2, phone=$3, name=$4, items=$5, subtotal=$6,
          updated_at=now(), reminded_at=NULL, converted=FALSE`,
       [contactKey, email || null, phone || null, String(b.name || '').slice(0, 80),
-       JSON.stringify(items), subtotal]
+        JSON.stringify(items), subtotal]
     );
     res.json({ ok: true });
   } catch (e) { console.error('cart save:', e.message); res.status(500).json({ error: 'Could not save cart' }); }
@@ -3016,7 +3021,7 @@ app.post('/api/customer/password-reset/confirm', authLimiter, async (req, res) =
       await client.query('UPDATE password_resets SET used=TRUE WHERE id=$1', [rec.id]);
       await client.query('COMMIT');
     } catch (txErr) {
-      await client.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK').catch(() => { });
       throw txErr;
     } finally {
       client.release();
@@ -3049,7 +3054,7 @@ app.post('/api/reviews', requireCustomer, async (req, res) => {
     await pool.query(
       'INSERT INTO reviews (product_id, customer_id, rating, body, photo_urls) VALUES ($1,$2,$3,$4,$5)',
       [productId, req.session.customerId, rating, body,
-       Array.isArray(req.body?.photoUrls) ? req.body.photoUrls.slice(0, 4).map(u => String(u).slice(0, 500)) : []]
+        Array.isArray(req.body?.photoUrls) ? req.body.photoUrls.slice(0, 4).map(u => String(u).slice(0, 500)) : []]
     );
     res.json({ ok: true, note: 'Review submitted — it will appear once approved by the store.' });
   } catch (e) { console.error('submit review:', e.message); res.status(500).json({ error: 'Could not submit review' }); }
@@ -3090,7 +3095,7 @@ app.get('/api/admin/orders.csv', requireAdmin, async (_req, res) => {
               (SELECT string_agg(p.title || ' x' || oi.qty, '; ') FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = o.id) AS items
          FROM orders o ORDER BY o.created_at DESC LIMIT 5000`
     );
-    const headers = ['Order ID','Date','Customer Name','Phone','Email','Address','Pincode','Items','Subtotal','Discount','Shipping','Total','Payment Mode','Payment Status','Status','Tracking #','Carrier','Coupon'];
+    const headers = ['Order ID', 'Date', 'Customer Name', 'Phone', 'Email', 'Address', 'Pincode', 'Items', 'Subtotal', 'Discount', 'Shipping', 'Total', 'Payment Mode', 'Payment Status', 'Status', 'Tracking #', 'Carrier', 'Coupon'];
     // AUDIT Low #16: prevent CSV formula injection — a value starting with
     // = + - @ (or tab/CR) is neutralised with a leading apostrophe so Excel /
     // Google Sheets treat it as text, not a formula.
@@ -3110,7 +3115,7 @@ app.get('/api/admin/orders.csv', requireAdmin, async (_req, res) => {
       ].map(escCsv).join(','));
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="tish-orders-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="tish-orders-${new Date().toISOString().slice(0, 10)}.csv"`);
     res.send(lines.join('\n'));
   } catch (e) { console.error('orders.csv:', e.message); res.status(500).json({ error: 'Could not export orders' }); }
 });
@@ -3145,11 +3150,11 @@ for (const icon of ['favicon.ico', 'favicon.png', 'apple-touch-icon.png']) {
    <title>, description, og:* and canonical — each page previews like a real
    separate page. The HTML is cached once at boot (deploys restart the app). */
 const PAGE_META = {
-  shop:    { title: 'Shop All Products — Tish Creations', desc: 'Browse trendy & affordable jewellery, hair accessories, scrunchies, gift hampers, stationery & more. Pan-India delivery.' },
-  faq:     { title: 'FAQ — Tish Creations', desc: 'Answers about ordering, payments, shipping times, delivery charges and returns at Tish Creations.' },
-  about:   { title: 'About Us — Tish Creations', desc: 'The story behind Tish Creations — trendy, affordable jewellery and accessories, shipped across India from Meerut.' },
+  shop: { title: 'Shop All Products — Tish Creations', desc: 'Browse trendy & affordable jewellery, hair accessories, scrunchies, gift hampers, stationery & more. Pan-India delivery.' },
+  faq: { title: 'FAQ — Tish Creations', desc: 'Answers about ordering, payments, shipping times, delivery charges and returns at Tish Creations.' },
+  about: { title: 'About Us — Tish Creations', desc: 'The story behind Tish Creations — trendy, affordable jewellery and accessories, shipped across India from Meerut.' },
   contact: { title: 'Contact Us — Tish Creations', desc: 'Reach Tish Creations on WhatsApp, email or Instagram — we usually reply within a few hours.' },
-  policy:  { title: 'Our Policies — Tish Creations', desc: 'Privacy, refund, shipping and terms of service for shopping at Tish Creations.' },
+  policy: { title: 'Our Policies — Tish Creations', desc: 'Privacy, refund, shipping and terms of service for shopping at Tish Creations.' },
 };
 let INDEX_HTML_CACHE = '';
 try { INDEX_HTML_CACHE = fsMod.readFileSync(path.join(__dirname, 'index.html'), 'utf8'); }
@@ -3266,17 +3271,17 @@ const server = app.listen(PORT, async () => {
   // Keep the idempotency ledger from growing forever. .unref() so this timer
   // never keeps the process alive on its own.
   if (pool) {
-    const prune = () => pool.query("DELETE FROM processed_webhooks WHERE processed_at < now() - interval '30 days'").catch(() => {});
+    const prune = () => pool.query("DELETE FROM processed_webhooks WHERE processed_at < now() - interval '30 days'").catch(() => { });
     prune();
     setInterval(prune, 24 * 60 * 60 * 1000).unref();
     // Also prune expired password-reset tokens.
-    const pruneResets = () => pool.query("DELETE FROM password_resets WHERE expires_at < now()").catch(() => {});
+    const pruneResets = () => pool.query("DELETE FROM password_resets WHERE expires_at < now()").catch(() => { });
     pruneResets();
     setInterval(pruneResets, 24 * 60 * 60 * 1000).unref();
     // Abandoned-cart reminder job: check every 15 minutes.
     setInterval(runAbandonedCartReminders, 15 * 60 * 1000).unref();
     // Prune old cart rows (>30 days) so the table doesn't grow forever.
-    const pruneCarts = () => pool.query("DELETE FROM abandoned_carts WHERE updated_at < now() - interval '30 days'").catch(() => {});
+    const pruneCarts = () => pool.query("DELETE FROM abandoned_carts WHERE updated_at < now() - interval '30 days'").catch(() => { });
     setInterval(pruneCarts, 24 * 60 * 60 * 1000).unref();
     console.log(`   Abandoned-cart reminders: ${WHATSAPP_TOKEN || SMTP_URL ? `on (nudge after ${ABANDON_AFTER_MIN} min)` : 'table ready, but set WHATSAPP_TOKEN or SMTP_URL to actually send'}`);
   }
