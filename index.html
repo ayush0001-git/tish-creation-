@@ -1885,6 +1885,8 @@
           price: Number.isFinite(Number(db.price)) ? Number(db.price) : (rp.price||0),
           was: (db.originalPrice!=null && Number.isFinite(Number(db.originalPrice))) ? Number(db.originalPrice) : (rp.was!=null?rp.was:null),
           spec: rp.spec || String(db.description||"").slice(0,70),
+          weightGrams: (db.weightGrams != null && Number.isFinite(Number(db.weightGrams))) ? Number(db.weightGrams) : (rp.weightGrams != null ? rp.weightGrams : 100),
+          weight: (db.weight != null && Number.isFinite(Number(db.weight))) ? Number(db.weight) : (rp.weight != null ? rp.weight : 0.1),
           img: rp.img && String(rp.img).startsWith("data:") ? rp.img : (dbImg || rp.img || PLC),
           badge: rp.badge || "",
           feat: !!rp.feat,
@@ -1937,9 +1939,16 @@
   const SHIP = { pin:"", mode:"prepaid", quote:null, city:"", serviceable:null, demo:false };
   function resetShipQuote(){ SHIP.quote = null; SHIP.serviceable = null; SHIP.city = ""; }
 
-  /* Parcel-weight estimate — server ke estimateWeightGrams() ka EXACT mirror:
-     0.15 kg per item, minimum 0.5 kg. (Same formula = quote == charge.) */
-  const estWeightKg = ()=> Math.max(0.5, Math.round(bagQty()*0.15*100)/100);
+  /* Parcel-weight exact calculation based on product weightGrams / weight: */
+  const estWeightKg = ()=> {
+    let w = 0;
+    for (const i of bag) {
+      const p = DATA.products.find(x => x.id === i.id) || {};
+      const wg = p.weightGrams != null ? Number(p.weightGrams) : (p.weight != null ? Number(p.weight)*1000 : 100);
+      w += (wg || 100) * i.qty;
+    }
+    return Math.max(0.05, Math.round(w) / 1000);
+  };
 
   function cartShip(){
     if (!bag.length) return 0;
@@ -3381,10 +3390,11 @@
           + '<label>Name</label><input data-f="name" value="'+esc(p.name)+'">'
           + '<div class="ad-row2"><div><label>Price ₹</label><input type="number" inputmode="numeric" data-f="price" value="'+esc(p.price)+'"></div>'
           + '<div><label>MRP ₹ (cut price)</label><input type="number" inputmode="numeric" data-f="was" value="'+(p.was==null?"":esc(p.was))+'"></div></div>'
+          + '<div class="ad-row2"><div><label>Weight (grams)</label><input type="number" inputmode="numeric" data-f="weightGrams" value="'+esc(p.weightGrams ?? Math.round((p.weight || 0.1)*1000))+'" placeholder="100"></div>'
+          + '<div><label>Category</label><select data-f="cat">'+catOpts(p.cat)+'</select></div></div>'
           + '<label>Image URL <small style="text-transform:none;letter-spacing:0">'+imgFieldNote(p.img)+'</small></label><input data-f="img" placeholder="https://…" value="'+urlVal+'">'
           + '<label>Extra photos <small style="text-transform:none;letter-spacing:0">one URL per line — shown as a thumbnail gallery on the product page</small></label><textarea data-f="images" rows="2" placeholder="https://…&#10;https://…">'+esc(Array.isArray(p.images)?p.images.filter(u=>u&&u!==p.img&&!String(u).startsWith("data:")).join("\n"):"")+'</textarea>'
-          + '<div class="ad-row2"><div><label>Category</label><select data-f="cat">'+catOpts(p.cat)+'</select></div>'
-          + '<div><label>Badge</label><select data-f="badge">'+BADGES.map(b=>'<option value="'+b+'"'+(b===(p.badge||"")?" selected":"")+'>'+(b||"— none —")+'</option>').join("")+'</select></div></div>'
+          + '<div class="ad-row2"><div><label>Badge</label><select data-f="badge">'+BADGES.map(b=>'<option value="'+b+'"'+(b===(p.badge||"")?" selected":"")+'>'+(b||"— none —")+'</option>').join("")+'</select></div><div></div></div>'
           + '<label>Short detail line</label><input data-f="spec" value="'+esc(p.spec||"")+'">'
           + '<div class="ad-flags">'
           + '<label><input type="checkbox" data-f="feat"'+(p.feat?" checked":"")+'> Show in Trending</label>'
@@ -3393,7 +3403,7 @@
           + '</div></div></div>';
         }).join("");
       $("#adAddProd").addEventListener("click", ()=>{
-        DATA.products.unshift({ id:"p_"+Date.now().toString(36), name:"New Product", cat:"jewelry", price:99, was:null, spec:"", img:PLC, badge:"New", feat:false, hide:false });
+        DATA.products.unshift({ id:"p_"+Date.now().toString(36), name:"New Product", cat:"jewelry", price:99, was:null, spec:"", img:PLC, badge:"New", feat:false, hide:false, weightGrams:100 });
         renderAdminTab(); renderFilters(); renderGrids(); toast("New product added — fill in the details");
       });
     } else if (ADMIN.tab === "orders"){
@@ -3479,7 +3489,17 @@
       const r = await fetch(TC_CONFIG.backendUrl + "/api/admin/orders/" + encodeURIComponent(id), {
         method:"PATCH", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload) });
       const d = await r.json().catch(()=>({}));
-      if (r.ok){ toast("✔ Order updated"); if(btn){ btn.textContent="Updated ✓"; setTimeout(()=>{ btn.textContent="Update"; btn.disabled=false; },1500); } }
+      if (r.ok){
+        const note = d.delhiveryNote ? (" · " + d.delhiveryNote) : "";
+        toast("✔ Order updated" + note);
+        if (d.order && d.order.tracking_number) {
+          const trInp = card.querySelector('[data-ofield="trackingNumber"]');
+          const crInp = card.querySelector('[data-ofield="carrier"]');
+          if (trInp) trInp.value = d.order.tracking_number;
+          if (crInp) crInp.value = d.order.carrier || 'Delhivery';
+        }
+        if(btn){ btn.textContent="Updated ✓"; setTimeout(()=>{ btn.textContent="Update"; btn.disabled=false; },2500); }
+      }
       else { toast(d.error || "Could not update order"); if(btn){ btn.textContent="Update"; btn.disabled=false; } }
     } catch(e){ toast("Network error"); if(btn){ btn.textContent="Update"; btn.disabled=false; } }
   }
@@ -3552,6 +3572,7 @@
       const f = t.dataset.f;
       if (f==="price") p.price = Number(t.value)||0;
       else if (f==="was") p.was = t.value==="" ? null : (Number(t.value)||null);
+      else if (f==="weightGrams") p.weightGrams = Number(t.value)||100;
       else if (f==="feat" || f==="hide") p[f] = t.checked;
       else if (f==="img"){ if (t.value.trim()) { p.img = t.value.trim(); card.querySelector(".ad-thumb img").src = p.img; } }
       else if (f==="images"){ p.images = t.value.split(/\n+/).map(u=>u.trim()).filter(Boolean); }
@@ -3592,7 +3613,7 @@
           // Save this product immediately so its new photo URL sticks on the server.
           try {
             await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
-              body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", image:url }) });
+              body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:url }) });
           } catch(e){}
         }
       });
@@ -3682,7 +3703,7 @@
     if (!ADMIN.authed) return toast("Please log in as owner first");
     let ok = 0, skippedImg = 0;
     for (const p of DATA.products){
-      const body = { id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"" };
+      const body = { id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100 };
       if (p.img && !String(p.img).startsWith("data:") && String(p.img).length<=500) body.image = p.img; else if (p.img) skippedImg++;
       try {
         const r = await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify(body) });

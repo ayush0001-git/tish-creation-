@@ -100,7 +100,7 @@ const {
   RAZORPAY_KEY_SECRET = '',
   RAZORPAY_WEBHOOK_SECRET = '',
   DELHIVERY_TOKEN = '',
-  WAREHOUSE_PINCODE = '250001',
+  WAREHOUSE_PINCODE = process.env.WAREHOUSE_PINCODE || '247667',
   DATABASE_URL = '',
   DATABASE_SSL = '',          // "require" = TLS without CA verification (managed PG); "verify" = full verify; "" in prod = verify
   OPENAI_API_KEY = '',
@@ -572,6 +572,7 @@ CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, slug TEXT UNIQUE, title TEXT NOT NULL, description TEXT, category TEXT,
   base_price NUMERIC(10,2) NOT NULL CHECK (base_price >= 0), original_price NUMERIC(10,2),
   image_url TEXT, in_stock BOOLEAN NOT NULL DEFAULT TRUE, is_wholesale BOOLEAN NOT NULL DEFAULT FALSE,
+  weight_grams INTEGER NOT NULL DEFAULT 100,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
 -- Uploaded photos live here (base64 data URLs are too big for products.image_url).
@@ -639,6 +640,7 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS email_otp_attempts INTEGER NOT NU
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS email_otp_sent_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_email ON customers (lower(email));
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_google_sub ON customers (google_sub) WHERE google_sub IS NOT NULL;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS weight_grams INTEGER NOT NULL DEFAULT 100;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ DEFAULT now();
@@ -768,11 +770,11 @@ async function seedProductsIfEmpty() {
       await client.query('BEGIN');
       for (const p of SEED_PRODUCTS) {
         await client.query(
-          `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
+          `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING`,
           [p.id, p.name, p.category, p.price,
           Number.isFinite(Number(p.originalPrice)) ? Number(p.originalPrice) : null,
-          p.image, p.inStock !== false, p.description]
+          p.image, p.inStock !== false, p.description, p.weightGrams ?? 100]
         );
       }
       await client.query('COMMIT');
@@ -786,7 +788,8 @@ async function getProducts() {
   if (!pool) return SEED_PRODUCTS;
   const { rows } = await pool.query(
     `SELECT id, title AS name, category, base_price AS price, original_price AS "originalPrice",
-            image_url AS image, in_stock AS "inStock", description
+            image_url AS image, in_stock AS "inStock", description,
+            weight_grams AS "weightGrams", COALESCE(weight_grams, 100)::numeric / 1000.0 AS weight
        FROM products ORDER BY created_at DESC`
   );
   return rows;
@@ -1252,11 +1255,12 @@ async function issueEmailOtp(customer) {
 
 // Recompute the goods total on the SERVER from real product prices. Unknown or
 // out-of-stock items are rejected, not silently priced at 0. Used by /api/orders.
-async function computeOrderTotals(items, paymentMode) {
+async function computeOrderTotals(items, paymentMode, pincode) {
   const products = await getProducts();
   const byId = Object.fromEntries(products.map((p) => [String(p.id), p]));
   const list = Array.isArray(items) ? items.slice(0, MAX_ITEMS) : [];
   let subtotal = 0;
+  let totalWeightGrams = 0;
   const orderItems = [];
   for (const it of list) {
     const p = byId[String(it && it.id)];
@@ -1265,9 +1269,29 @@ async function computeOrderTotals(items, paymentMode) {
     if (!p || !p.inStock) { const e = new Error('Item unavailable'); e.code = 'ITEM_UNAVAILABLE'; throw e; }
     const qty = Math.max(1, Math.min(999, parseInt(it.qty, 10) || 1));
     subtotal += Number(p.price) * qty;
+    const wg = p.weightGrams != null ? Number(p.weightGrams) : (p.weight != null ? Number(p.weight)*1000 : 100);
+    totalWeightGrams += (wg || 100) * qty;
     orderItems.push({ id: String(it.id), qty, price: Number(p.price) });
   }
-  const shipping = orderTotalShipping(paymentMode, subtotal);
+  let shipping = 0;
+  if (subtotal < RETAIL_FREE_SHIP_THRESHOLD) {
+    if (paymentMode !== 'prepaid') {
+      shipping = COD_SHIPPING_FEE;
+    } else if (pincode && isValidPincode(pincode) && DELHIVERY_TOKEN) {
+      try {
+        const wKg = Math.max(0.05, Math.round(totalWeightGrams) / 1000);
+        if (!axios) throw new Error('axios not installed');
+        const r = await axios.get('https://track.delhivery.com/api/kinko/v1/invoice/charges/.json', {
+          params: { md: paymentMode === 'cod' ? 'S' : 'E', cgm: Math.round(wKg * 1000), o_pin: WAREHOUSE_PINCODE, d_pin: pincode, ss: 'Delivered' },
+          headers: { Authorization: `Token ${DELHIVERY_TOKEN}` }, timeout: 8000,
+        });
+        const total = Array.isArray(r.data) ? r.data[0]?.total_amount : r.data?.total_amount;
+        if (Number.isFinite(Number(total))) shipping = Math.round(Number(total));
+      } catch (err) { console.error('computeOrderTotals shipping rate:', err?.message); }
+    } else if (!DELHIVERY_TOKEN && paymentMode !== 'prepaid') {
+      shipping = COD_SHIPPING_FEE;
+    }
+  }
   const discount = 0; // No bulk discount is wired up in the storefront; see audit report.
   return { subtotal, shipping, discount, total: subtotal - discount + shipping, orderItems };
 }
@@ -1339,11 +1363,111 @@ async function markOrderPaid(razorpayOrderId, razorpayPaymentId, amountPaise) {
       return false;
     }
   }
-  await pool.query(
+  const { rows: oRows } = await pool.query(
     `UPDATE orders SET payment_status='paid', status=CASE WHEN status='pending' THEN 'confirmed' ELSE status END,
-       razorpay_payment_id=$2, status_updated_at=now() WHERE razorpay_order_id=$1`,
+       razorpay_payment_id=$2, status_updated_at=now() WHERE razorpay_order_id=$1 RETURNING id, status`,
     [razorpayOrderId, razorpayPaymentId || null]);
+  if (oRows[0] && oRows[0].status === 'confirmed') {
+    await autoBookDelhiveryIfConfirmed(oRows[0].id);
+  }
   return true;
+}
+
+async function autoBookDelhiveryIfConfirmed(orderId) {
+  if (!DELHIVERY_TOKEN) return { waybill: null, note: 'Delhivery token not configured' };
+  try {
+    const current = await getOrderById(orderId);
+    if (!current) return { waybill: null, note: 'Order not found' };
+    if (current.tracking_number) return { waybill: current.tracking_number, note: `Already tracked: ${current.tracking_number}` };
+
+    const allProds = await getProducts();
+    let totalWeightGrams = 0;
+    const items = Array.isArray(current.items) ? current.items : [];
+    if (items.length === 0 && pool) {
+      const { rows } = await pool.query('SELECT product_id AS id, qty FROM order_items WHERE order_id=$1', [orderId]);
+      rows.forEach(it => {
+        const p = allProds.find(x => x.id === it.id);
+        const wg = p?.weightGrams != null ? Number(p.weightGrams) : (p?.weight != null ? Number(p.weight)*1000 : 100);
+        totalWeightGrams += (wg || 100) * (it.qty || 1);
+      });
+    } else {
+      items.forEach(it => {
+        const p = allProds.find(x => x.id === it.id);
+        const wg = p?.weightGrams != null ? Number(p.weightGrams) : (p?.weight != null ? Number(p.weight)*1000 : 100);
+        totalWeightGrams += (wg || 100) * (it.qty || 1);
+      });
+    }
+    if (totalWeightGrams <= 0) totalWeightGrams = 150;
+    const weightKg = Math.max(0.05, Math.round(totalWeightGrams) / 1000);
+
+    let addr = {};
+    if (typeof current.shipping_address === 'string') {
+      try { addr = JSON.parse(current.shipping_address); } catch(e){}
+    } else if (current.shipping_address && typeof current.shipping_address === 'object') {
+      addr = current.shipping_address;
+    }
+    const fullAddress = [addr.line1, addr.line2, addr.city, addr.state].filter(Boolean).join(', ') || 'Ramnagar, Roorkee';
+    const destPin = String(current.shipping_pincode || addr.pincode || '').slice(0, 6);
+
+    const payload = {
+      shipments: [{
+        name: String(current.customer_name || 'Customer').slice(0, 100),
+        add: fullAddress.slice(0, 300),
+        pin: destPin,
+        city: String(addr.city || 'Roorkee').slice(0, 80),
+        state: String(addr.state || 'Uttarakhand').slice(0, 80),
+        country: 'India',
+        phone: String(current.customer_phone || '9999999999').replace(/[^\d]/g, '').slice(0, 15),
+        order: String(current.id).slice(0, 50),
+        payment_mode: current.payment_mode === 'cod' ? 'COD' : 'Pre-paid',
+        return_pin: WAREHOUSE_PINCODE,
+        return_add: 'Ramnagar, Roorkee, 247667',
+        return_phone: process.env.WAREHOUSE_PHONE || '9999999999',
+        products_desc: items.map(i => i.name || i.id).join(', ').slice(0, 200) || 'Jewellery & Accessories',
+        hsn_code: '7117',
+        cod_amount: current.payment_mode === 'cod' ? String(current.total || 0) : '0',
+        order_date: new Date(current.created_at || Date.now()).toISOString().split('T')[0],
+        total_amount: String(current.total || 0),
+        seller_add: 'Ramnagar, Roorkee, 247667',
+        seller_name: 'Tish Creations',
+        seller_inv: String(current.id).slice(0, 50),
+        quantity: String(items.reduce((acc, it) => acc + (it.qty || 1), 0) || 1),
+        waybill: '',
+        shipment_width: '10',
+        shipment_height: '5',
+        shipment_length: '10',
+        weight: String(weightKg)
+      }],
+      pickup_location: {
+        name: process.env.DELHIVERY_PICKUP_LOCATION || 'Tish Creations'
+      }
+    };
+
+    if (!axios) throw new Error('axios not installed');
+    const formParams = new URLSearchParams();
+    formParams.append('format', 'json');
+    formParams.append('data', JSON.stringify(payload));
+
+    const delivRes = await axios.post('https://track.delhivery.com/api/cmu/create.json', formParams, {
+      headers: { Authorization: `Token ${DELHIVERY_TOKEN}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 12000
+    });
+
+    if (delivRes.data && (delivRes.data.success || delivRes.data.packages?.[0]?.status === 'Success')) {
+      const waybill = delivRes.data.packages?.[0]?.waybill || delivRes.data.waybill || null;
+      if (waybill) {
+        await updateOrder(orderId, { trackingNumber: waybill, carrier: 'Delhivery' });
+        console.log(`Auto-booked Delhivery for #${orderId} -> Waybill: ${waybill}`);
+        return { waybill, note: `Auto-booked on Delhivery! Waybill: ${waybill}` };
+      }
+    }
+    const errReason = delivRes.data?.rmk || delivRes.data?.packages?.[0]?.remarks?.join(', ') || JSON.stringify(delivRes.data || {});
+    console.warn(`Delhivery auto-booking note for #${orderId}:`, errReason);
+    return { waybill: null, note: `Delhivery note: ${errReason}` };
+  } catch (err) {
+    console.error(`Delhivery auto-booking error for #${orderId}:`, err?.message || err);
+    return { waybill: null, note: `Delhivery error: ${err?.message || err}` };
+  }
 }
 // Returns true if this is the first time we've seen the event (i.e. safe to process).
 async function claimWebhookEvent(eventId) {
@@ -1540,12 +1664,13 @@ app.post('/api/products', requireAdmin, async (req, res) => {
     let id = String(b.id || '').trim().slice(0, 60);
     if (id && !/^p[0-9a-zA-Z_-]{0,59}$/.test(id)) return res.status(400).json({ error: 'Invalid product id (must match ^p[0-9a-zA-Z_-]{0,59}$)' });
     if (!id) id = 'p_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
+    const weightGrams = Math.max(10, Math.min(50000, Math.round(Number(b.weightGrams ?? (b.weight != null ? b.weight * 1000 : 100)) || 100)));
     await pool.query(
-      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8`,
+      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8, weight_grams=$9`,
       [id, name, category, price, Number.isFinite(Number(b.originalPrice)) ? Number(b.originalPrice) : null,
-        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000)]
+        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams]
     );
     res.json({ ok: true, id });
   } catch (e) { console.error('save product:', e.message); res.status(500).json({ error: 'Could not save product' }); }
@@ -2041,13 +2166,16 @@ async function getOrderItems(orderId) {
 app.patch('/api/admin/orders/:id/mark-upi-paid', requireAdmin, async (req, res) => {
   try {
     const id = String(req.params.id).slice(0, 60);
+    let delhiveryNote = null;
     if (pool) {
       await pool.query(
         `UPDATE orders SET payment_status='paid', status=CASE WHEN status='pending' THEN 'confirmed' ELSE status END,
            status_updated_at=now() WHERE id=$1`, [id]
       );
+      const resDel = await autoBookDelhiveryIfConfirmed(id);
+      delhiveryNote = resDel?.note || null;
     }
-    res.json({ ok: true });
+    res.json({ ok: true, delhiveryNote });
   } catch (e) { console.error('mark-upi-paid:', e.message); res.status(500).json({ error: 'Could not mark paid' }); }
 });
 
@@ -2524,7 +2652,7 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
     // Server is the single source of truth for the amount AND it captures the
     // delivery details (previously only the pincode was kept, so orders could
     // not be shipped). Shipping mirrors the storefront checkout exactly.
-    const { subtotal, shipping, discount, total, orderItems } = await computeOrderTotals(items, paymentMode);
+    const { subtotal, shipping, discount, total, orderItems } = await computeOrderTotals(items, paymentMode, pincode);
     // M5 fix: server-side minimum-order enforcement. The client gates at ₹1000
     // but a direct API call could bypass that — so we re-check here.
     if (subtotal < MIN_ORDER_VALUE) {
@@ -2800,13 +2928,17 @@ app.patch('/api/admin/orders/:id', requireAdmin, async (req, res) => {
       if (!isValidStatusTransition(current.status, status))
         return res.status(400).json({ error: `Can't move an order from "${current.status}" to "${status}".` });
     }
+    let delhiveryResult = null;
+    if (status === 'confirmed') {
+      delhiveryResult = await autoBookDelhiveryIfConfirmed(orderId);
+    }
     const o = await updateOrder(orderId, {
       status,
       trackingNumber: trackingNumber !== undefined ? String(trackingNumber).slice(0, 60) : undefined,
       carrier: carrier !== undefined ? String(carrier).slice(0, 40) : undefined,
     });
     if (!o) return res.status(404).json({ error: 'Order not found' });
-    res.json({ ok: true, order: o });
+    res.json({ ok: true, order: o, delhiveryNote: delhiveryResult?.note || null });
   } catch (e) { console.error('update order:', e.message); res.status(500).json({ error: 'Could not update order' }); }
 });
 
