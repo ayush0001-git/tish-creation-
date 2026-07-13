@@ -1025,8 +1025,16 @@ async function seedProductsIfEmpty() {
   } catch (e) { console.warn('   ⚠️  Could not seed products:', e.message); }
 }
 
+let _cachedProducts = null;
+let _cachedProductsTime = 0;
+function clearProductsCache() { _cachedProducts = null; _cachedProductsTime = 0; }
+
 async function getProducts() {
   if (!pool) return SEED_PRODUCTS;
+  const now = Date.now();
+  if (_cachedProducts && (now - _cachedProductsTime < 15000)) {
+    return _cachedProducts;
+  }
   const { rows } = await pool.query(
     `SELECT id, title AS name, category, base_price AS price, original_price AS "originalPrice",
             image_url AS image, in_stock AS "inStock", description,
@@ -1034,6 +1042,8 @@ async function getProducts() {
             stock_qty AS "stock"
        FROM products ORDER BY created_at DESC`
   );
+  _cachedProducts = rows;
+  _cachedProductsTime = now;
   return rows;
 }
 
@@ -1365,11 +1375,7 @@ function orderTotalShipping(paymentMode, subtotal) {
 // In-memory fallback (DEV ONLY — production is guarded above to require Postgres).
 const mem = { customers: new Map(), orders: [] };
 const emailKey = (e) => String(e || '').trim().toLowerCase();
-// Order id format: TC-<10 digits from Date.now()>-<16 hex chars from crypto.randomBytes>.
-// That's 64 bits of crypto-random entropy on top of the timestamp — practically
-// unguessable, which matters because /api/orders/:id is the lookup key for
-// guest orders (where there's no customer_id to compare against).
-const newOrderId = () => 'TC-' + Date.now().toString().slice(-10) + '-' + crypto.randomBytes(8).toString('hex');
+const newOrderId = () => 'TC-' + Math.floor(100000 + Math.random() * 900000);
 
 async function findCustomerByEmail(email) {
   if (!pool) return mem.customers.get(emailKey(email)) || null;
@@ -2005,6 +2011,7 @@ app.post('/api/products', requireAdmin, async (req, res) => {
       [id, name, category, price, Number.isFinite(Number(b.originalPrice)) ? Number(b.originalPrice) : null,
         b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams, stockQty]
     );
+    clearProductsCache();
     res.json({ ok: true, id });
   } catch (e) { console.error('save product:', e.message); res.status(500).json({ error: 'Could not save product' }); }
 });

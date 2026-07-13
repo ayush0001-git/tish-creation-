@@ -3008,7 +3008,7 @@
   /* ---------- TRACK ORDER ---------- */
   function trackPaneHTML(){
     return '<div class="af-field" style="margin-top:6px"><label for="trkId">Order ID</label>'
-      + '<div class="co-inline-pin"><input id="trkId" placeholder="TC-XXXXXXXXXX-…" value="'+esc(ACCT.trackId||"")+'">'
+      + '<div class="co-inline-pin"><input id="trkId" placeholder="TC-XXXXXX (e.g. TC-849201)" value="'+esc(ACCT.trackId||"")+'">'
       + '<button class="co-check" style="width:auto;margin:0;padding:0 18px" data-ac="trk-go" data-primary>Track</button></div></div>'
       + '<div id="trkLocal"></div>'
       + '<div id="trkResult"></div>';
@@ -3094,7 +3094,7 @@
     try {
       const r = await fetch(TC_CONFIG.backendUrl + "/api/orders/track?id=" + encodeURIComponent(id) + (token ? "&token=" + encodeURIComponent(token) : ""), { credentials:"include" });
       const d = await r.json().catch(()=>({}));
-      if (r.ok && d.order){ out.innerHTML = timelineHTML(d.order); return; }
+      if (r.ok && d.order){ out.innerHTML = timelineHTML(d.order); try { out.scrollIntoView({ behavior:"smooth", block:"start" }); } catch(e){} return; }
       if (r.status === 403) out.innerHTML = '<div class="acct-err">This order is linked to an account — please <b>sign in</b> with that email to view it, or open it from the confirmation WhatsApp/email link.</div>';
       else if (r.status === 404) out.innerHTML = '<div class="acct-err">This Order ID was not found — please check the spelling and try again.</div>';
       else out.innerHTML = '<div class="acct-err">'+esc(d.error||"Could not load tracking")+'</div>';
