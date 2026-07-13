@@ -1715,6 +1715,7 @@
       + '</div><div class="pbody">'
       + '<h3 class="pname">'+esc(p.name)+'</h3>'
       + '<div class="pspec">'+esc(p.spec||catLabel(p.cat))+'</div>'
+      + (!outOfStock && p.stock != null && Number.isFinite(Number(p.stock)) && Number(p.stock) <= 10 ? '<div style="color:#D9534F;font-size:11px;font-weight:700;margin:2px 0;">⚡ Only '+p.stock+' left in stock!</div>' : '')
       + starsHTML(p)
       + '<div class="pprice"><span class="now">'+inr(p.price)+'</span>'
       + (p.was ? '<span class="was">'+inr(p.was)+'</span><span class="off">'+off+'% off</span>' : '')
@@ -2091,6 +2092,14 @@
   function openCheckout(){
     if (!bag.length){ toast("Your bag is empty ✨"); return; }
     if (!meetsMin()){ toast("Minimum order " + inr(minOrder()) + " — add a little more"); return; }
+    if (!USER) {
+      ACCT.postLogin = "checkout";
+      if ($("#bagDrawer").classList.contains("open")) closePanel($("#bagDrawer"));
+      if ($("#pdModal").classList.contains("open")) closePanel($("#pdModal"));
+      openAcct("login");
+      toast("🔐 Please sign in to place your order — fast checkout & live tracking");
+      return;
+    }
     if (!form.name && USER && USER.name) form.name = USER.name;
     if (!form.email && USER && USER.email) form.email = USER.email;
     CH.placed = false; CH.method = defaultPayMethod(); CH.order = null;
@@ -2260,11 +2269,11 @@
   }
 
   function trustHTML(){
-    return '<div class="co-trust">'
-      + '<span><i>🔒</i>100% secure payment</span>'
-      + '<span><i>🚚</i>Pan-India Delhivery delivery</span>'
-      + '<span><i>📦</i>Live order tracking</span>'
-      + '<span><i>💬</i>WhatsApp support 7 days</span>'
+    return '<div class="co-trust" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;background:var(--ivory);padding:14px;border-radius:12px;border:1px solid var(--border);font-size:12px;color:var(--ink);box-shadow:0 2px 8px rgba(44,26,20,0.04);">'
+      + '<span style="display:flex;align-items:center;gap:8px;"><i>🔒</i><div><b>100% Secure</b><br><small style="color:var(--muted);font-size:10.5px;">256-bit SSL Encrypted</small></div></span>'
+      + '<span style="display:flex;align-items:center;gap:8px;"><i>🚚</i><div><b>Pan-India</b><br><small style="color:var(--muted);font-size:10.5px;">Delhivery & India Post</small></div></span>'
+      + '<span style="display:flex;align-items:center;gap:8px;"><i>🛡️</i><div><b>Quality Assured</b><br><small style="color:var(--muted);font-size:10.5px;">Handchecked & Gift packed</small></div></span>'
+      + '<span style="display:flex;align-items:center;gap:8px;"><i>💬</i><div><b>Quick Support</b><br><small style="color:var(--muted);font-size:10.5px;">WhatsApp 7 Days/Week</small></div></span>'
       + '</div>';
   }
 
@@ -2346,17 +2355,25 @@
     const scroll = $("#coScroll");
     if (CH.placed){
       const o = CH.order;
-      let h = '<div class="co-success"><div class="ok-ic">✓</div><h3>Order <em>Placed!</em></h3>';
+      let h = '<div class="co-success"><div class="ok-ic">✓</div><h3>Order <em>Placed Successfully!</em> 🎉</h3>';
       if (o){
+        const totalFormatted = inr(o.total || grandTotal());
         h += '<p>' + (o.mode === "upi"
-            ? 'UTR received — we\'ll verify the payment and confirm via WhatsApp soon. 💛'
-            : 'Your COD order has been placed — we\'ll confirm via WhatsApp shortly. 💛') + '</p>'
-          + '<div class="co-order-id"><b>'+esc(o.id)+'</b><button data-co="copyid">Copy</button></div>'
+            ? 'Your payment reference has been received. Our team is verifying your payment and preparing your order for dispatch. 🌸'
+            : 'Your order has been received and booked! Our artisans will prepare your handcrafted creations with love. 🌸') + '</p>'
+          + '<div class="co-order-id" style="margin-bottom:16px;"><span>Order ID:</span><b>'+esc(o.id)+'</b><button data-co="copyid">Copy</button></div>'
+          + '<div style="background:var(--ivory);border:1px solid var(--border);border-radius:14px;padding:18px;text-align:left;font-size:13.5px;margin-bottom:20px;box-shadow:0 4px 16px rgba(44,26,20,0.05);">'
+          + '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:var(--muted);">Total Amount:</span><strong style="color:var(--ink);font-size:16px;">'+totalFormatted+'</strong></div>'
+          + '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:var(--muted);">Payment Method:</span><strong>'+(o.mode==="upi" ? "⏳ UPI / Prepaid" : "💵 Cash on Delivery")+'</strong></div>'
+          + '<div style="display:flex;justify-content:space-between;margin-bottom:12px;"><span style="color:var(--muted);">Est. Delivery:</span><span>4–7 business days</span></div>'
+          + '<div style="border-top:1px dashed var(--border);padding-top:12px;font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:8px;">'
+          + '<span>📧</span><span>A detailed order confirmation & tracking link have been sent to <b>'+esc(o.customer_email || form.email || (USER ? USER.email : 'your email'))+'</b> and via WhatsApp.</span>'
+          + '</div></div>'
           + '<div class="co-success-actions">'
-          + '<button class="a-btn dark" data-co="track">📦 &nbsp;Track this order</button>'
-          + (o.waLink ? '<a class="a-btn" href="'+esc(o.waLink)+'" target="_blank" rel="noopener">'+WA_SVG+' Send on WhatsApp</a>'
-                      : '<a class="a-btn" href="https://wa.me/'+esc(S().wa||"")+'?text='+encodeURIComponent(waMsgText(o.id, o.utr||""))+'" target="_blank" rel="noopener">'+WA_SVG+' Send on WhatsApp</a>')
-          + '<button class="a-btn" data-co="done">Continue shopping</button>'
+          + '<button class="a-btn dark" data-co="track" style="font-weight:700;">📦 &nbsp;Track Your Order Live</button>'
+          + (o.waLink ? '<a class="a-btn" href="'+esc(o.waLink)+'" target="_blank" rel="noopener">'+WA_SVG+' WhatsApp Update</a>'
+                      : '<a class="a-btn" href="https://wa.me/'+esc(S().wa||"")+'?text='+encodeURIComponent(waMsgText(o.id, o.utr||""))+'" target="_blank" rel="noopener">'+WA_SVG+' WhatsApp Update</a>')
+          + '<button class="a-btn" data-co="done">Continue Shopping</button>'
           + '</div>';
       } else {
         h += '<p>Your order has been sent via WhatsApp. We\'ll confirm and share delivery updates soon. 💛</p>'
@@ -2450,7 +2467,7 @@
     // Handle a server rejection (401/403/policy) with an honest message —
     // never fake a success for an order the server refused.
     const handleReject = (status, d)=>{
-      if (status === 401){ ACCT.postLogin="checkout"; closePanel($("#checkoutModal")); openAcct("login"); toast("🔐 Your session expired — please sign in again"); }
+      if (status === 401 || (d && d.needsLogin)){ ACCT.postLogin="checkout"; closePanel($("#checkoutModal")); openAcct("login"); toast("🔐 Please sign in to place your order"); }
       else if (status === 403 && d && d.needsVerification){ ACCT.pendingEmail=d.email||(USER&&USER.email)||""; ACCT.view="verify"; closePanel($("#checkoutModal")); openAcct("verify"); renderAcct(); toast("📧 Please verify your email first"); }
       else toast(d && d.error ? d.error : "Order could not be placed — please try again");
     };
@@ -2748,8 +2765,15 @@
 
   function refreshAcctBtn(){
     const b = $("#acctBtn");
-    if (USER && USER.pic) b.innerHTML = '<img class="avatar" referrerpolicy="no-referrer" src="'+esc(USER.pic)+'" alt="">';
-    else b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20c1.4-3.4 4.2-5 7.5-5s6.1 1.6 7.5 5"/></svg>';
+    const icon = (USER && USER.pic) ? '<img class="avatar" referrerpolicy="no-referrer" src="'+esc(USER.pic)+'" alt="">' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20c1.4-3.4 4.2-5 7.5-5s6.1 1.6 7.5 5"/></svg>';
+    if (USER && USER.name) {
+      const first = USER.name.trim().split(' ')[0];
+      b.innerHTML = icon + '<span style="font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap;margin-left:4px;">Hi, '+esc(first)+'</span>';
+      b.style.cssText = "width:auto;padding:3px 10px;border-radius:20px;background:var(--cream);border:1px solid var(--border);gap:3px;";
+    } else {
+      b.innerHTML = icon;
+      b.style.cssText = "";
+    }
   }
 
   function openAcct(view, trackId){
@@ -3267,9 +3291,17 @@
       if (!r.ok) return;
       const d = await r.json();
       if (d && d.customer && d.customer.name){
-        setUser({ name:d.customer.name, email:(USER&&USER.email)||"", pic:(USER&&USER.pic)||"" });
+        setUser({ name:d.customer.name, email:d.customer.email||"", phone:d.customer.phone||"", address:d.customer.address||null, pic:(USER&&USER.pic)||"" });
+        if (d.customer.address && typeof d.customer.address === "object" && !form.a1) {
+          form.a1 = d.customer.address.line1 || form.a1 || "";
+          form.a2 = d.customer.address.line2 || form.a2 || "";
+          form.city = d.customer.address.city || form.city || "";
+          form.state = d.customer.address.state || form.state || "";
+          form.pin = d.customer.address.pincode || form.pin || "";
+          if (d.customer.phone && !form.phone) form.phone = d.customer.phone;
+          maybeSaveCart();
+        }
       } else if (USER && !USER.local){
-        /* server bolta hai session nahi — stale local user hata do */
         setUser(null);
       }
     } catch(e){}
@@ -3628,7 +3660,12 @@
       const oid = resend.dataset.resendReceipt;
       resend.disabled = true; resend.textContent = "Sending…";
       try {
-        const r = await fetch(TC_CONFIG.backendUrl + "/api/admin/orders/" + encodeURIComponent(oid) + "/send-confirmed-receipt", { method: "POST", credentials: "include" });
+        const r = await fetch(TC_CONFIG.backendUrl + "/api/admin/orders/" + encodeURIComponent(oid) + "/send-confirmed-receipt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+          credentials: "include"
+        });
         const d = await r.json().catch(()=>({}));
         if (d.ok) toast("📧 Confirmed receipt email sent to customer!");
         else toast("⚠️ Could not send email: " + (d.error || "Check mail settings"));
@@ -3849,7 +3886,7 @@
       +     '<div class="pd-eyebrow">'+esc(catLabel(p.cat))+'</div>'
       +     '<h3 class="pd-title">'+esc(p.name)+'</h3>'
       +   '</div>'
-      +   (isOOS ? '<div class="pd-stock oos">● Out of Stock — <span>notify us on WhatsApp to restock</span></div>' : '<div class="pd-stock in">● In Stock · Ready to ship</div>')
+      +   (isOOS ? '<div class="pd-stock oos">● Out of Stock — <span>notify us on WhatsApp to restock</span></div>' : ((p.stock != null && Number.isFinite(Number(p.stock)) && Number(p.stock) <= 10) ? '<div class="pd-stock" style="color:#D9534F;font-weight:700;">⚡ Only '+p.stock+' left in stock — order soon!</div>' : '<div class="pd-stock in">● In Stock · Ready to ship</div>'))
       +   '<div class="pd-price-row"><span class="pd-price">'+inr(p.price)+'</span>'
       +     (p.was ? '<span class="pd-was">'+inr(p.was)+'</span><span class="pd-save">Save '+inr(save)+' ('+off+'% off)</span>' : '')
       +   '</div>'
@@ -3901,7 +3938,17 @@
     saveBag(); refreshBagUI();
     const b = $("#bagBtn"); b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop");
     try { recordRecent(p.id); } catch(e){}
-    if (goCheckout){ openCheckout(); if (!$("#checkoutModal").classList.contains("open")) openPanel($("#bagDrawer")); }
+    if (goCheckout){
+      if (!USER) {
+        ACCT.postLogin = "checkout";
+        if ($("#pdModal").classList.contains("open")) closePanel($("#pdModal"));
+        openAcct("login");
+        toast("🔐 Please sign in to place your order — fast checkout & live tracking");
+        return;
+      }
+      openCheckout();
+      if (!$("#checkoutModal").classList.contains("open")) openPanel($("#bagDrawer"));
+    }
     else { toast("✨ " + PD.qty + " × added to bag"); refreshBagUI(); openPanel($("#bagDrawer")); }
   }
 
@@ -4101,7 +4148,7 @@
       +'<h3>Do you offer Cash on Delivery (COD)?</h3><p>Yes! We accept <b>COD</b> as well as <b>UPI</b> (any app — GPay, PhonePe, Paytm). Just choose your preferred method at checkout.</p>'
       +'<h3>What are the shipping charges?</h3><p>Shipping is <b>FREE on orders ₹1,000+</b>. Below that, the exact courier charge is calculated live from your pincode at checkout.</p>'
       +'<h3>Can I return or exchange an item?</h3><p>Yes, within <b>7 days</b> of delivery for unused items in original packaging. See our <a href="#" data-policy="returns">Return &amp; Refund Policy</a> for details. Custom/personalised items are non-returnable.</p>'
-      +'<h3>Do I need an account to order?</h3><p>No — you can check out as a <b>guest</b> with just your name, email and phone. Creating an account lets you track orders and save your wishlist across devices.</p>'
+      +'<h3>Do I need an account to order?</h3><p>Yes — creating an account is quick, free, and secure! It allows you to check out faster with saved addresses, track your live order status anytime, and sync your wishlist across all devices.</p>'
       +'<h3>How do I track my order?</h3><p>Use the tracking link sent to you on WhatsApp/email, or log in and view <b>Order History</b> in your account.</p>'
       +'<h3>Are the products genuine / good quality?</h3><p>Every piece is <b>hand-checked</b> before dispatch and packed gift-ready. If anything arrives damaged, WhatsApp us a photo within 48 hours and we\'ll make it right.</p>'
       +'<h3>Still have a question?</h3><p>Message us any time on WhatsApp at <b><a href="https://wa.me/919837229280" target="_blank" rel="noopener">+91 98372 29280</a></b> — we reply 7 days a week. 🌸</p>' },

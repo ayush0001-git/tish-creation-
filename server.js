@@ -230,50 +230,52 @@ async function sendOrderConfirmationEmail(order, customerEmail) {
   const trackLink = order.guest_token
     ? `${origin}/#track?id=${encodeURIComponent(order.id)}&token=${encodeURIComponent(order.guest_token)}`
     : `${origin}/`;
-  const itemsHtml = (order.items || []).map(it => `
-    <tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #f0e6ff;">${escapeHtml(String(it.name || it.id || '')).slice(0, 100)}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #f0e6ff;text-align:center;">${it.qty}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #f0e6ff;text-align:right;">₹${Number(it.price * it.qty).toLocaleString('en-IN')}</td>
+  
+  const firstName = escapeHtml(String(order.customer_name || 'Customer').split(' ')[0] || 'there');
+  const items = Array.isArray(order.items) ? order.items : [];
+  const itemsHtml = items.map(it => `
+    <tr style="border-bottom:1px solid #F0E8DC;">
+      <td style="padding:12px 0;"><div style="font-weight:700;color:#2C1A14;font-size:14.5px;">${escapeHtml(String(it.name || it.id || 'Handcrafted Creation')).slice(0, 100)}</div></td>
+      <td style="padding:12px;text-align:center;color:#6A584A;font-weight:600;">× ${it.qty}</td>
+      <td style="padding:12px 0;text-align:right;font-weight:700;color:#2C1A14;font-size:14.5px;">₹${Number(it.price * it.qty).toLocaleString('en-IN')}</td>
     </tr>`).join('');
-  const payStatus = order.payment_status === 'paid' ? '✅ Paid' : (order.payment_mode === 'cod' ? '💵 Cash on Delivery' : '⏳ Pending');
-  const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5ecff;font-family:'Segoe UI',Tahoma,sans-serif;color:#1F0A33;">
-  <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(164,53,240,.15);">
-    <div style="background:linear-gradient(135deg,#A435F0,#7818C2);padding:28px 32px;color:#fff;text-align:center;">
-      <div style="font-size:30px;font-weight:800;letter-spacing:-.5px;">🌸 Tish Creations</div>
-      <div style="font-size:13px;opacity:.85;margin-top:4px;">jewellery, accessories & gifting</div>
+  const payStatus = order.payment_status === 'paid' ? '✅ Paid' : (order.payment_mode === 'cod' ? '💵 Cash on Delivery' : '⏳ Prepaid / UPI');
+
+  let addr = {};
+  if (typeof order.shipping_address === 'string') { try { addr = JSON.parse(order.shipping_address); } catch(e){} }
+  else if (order.shipping_address && typeof order.shipping_address === 'object') { addr = order.shipping_address; }
+  const addressHtml = [addr.line1, addr.line2, `${addr.city || ''} ${addr.state || ''}`.trim(), `PIN: ${addr.pincode || ''}`].filter(Boolean).join('<br>');
+
+  const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#F6F2EA;font-family:'Outfit','Segoe UI',Tahoma,sans-serif;color:#2C1A14;">
+  <div style="max-width:620px;margin:24px auto;background:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(44,26,20,0.12);border:1px solid #EAE0D0;">
+    <div style="background:#2C1A14;padding:32px 24px;text-align:center;color:#FFFFFF;border-bottom:3px solid #D4AF37;">
+      <div style="font-size:26px;font-weight:700;letter-spacing:0.5px;color:#FFFFFF;font-family:Georgia,serif;">Tish Creations</div>
+      <div style="font-size:11px;letter-spacing:2.5px;color:#D4AF37;font-weight:600;margin-top:2px;">ORDER RECEIVED 🌸</div>
     </div>
-    <div style="padding:32px;">
-      <h1 style="margin:0 0 8px;font-size:24px;color:#1F0A33;">Thank you for your order! 🎉</h1>
-      <p style="margin:0 0 16px;color:#6A4A8A;line-height:1.6;">Hi ${escapeHtml(order.customer_name || 'there')}, we've received your order and our team is getting it ready. Here are the details:</p>
-      <div style="background:#f5ecff;border:1px solid #ECDBFF;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#6A4A8A;">Order ID:</span><strong>#${escapeHtml(order.id)}</strong></div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#6A4A8A;">Payment:</span><strong>${payStatus}</strong></div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#6A4A8A;">Total:</span><strong style="color:#7818C2;font-size:18px;">₹${Number(order.total).toLocaleString('en-IN')}</strong></div>
-        <div style="display:flex;justify-content:space-between;"><span style="color:#6A4A8A;">Delivery:</span><span>10–12 days</span></div>
+    <div style="padding:32px 28px;">
+      <h1 style="margin:0 0 8px;font-size:22px;color:#2C1A14;">Thank you for your order! 🎉</h1>
+      <p style="margin:0 0 16px;color:#5A4636;line-height:1.6;">Hi ${firstName}, we've received your order and our artisans are getting it ready with care. Here are the details:</p>
+      <div style="background:#FAF6EE;border:1px solid #EAE0D0;border-radius:12px;padding:18px 20px;margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#8A7565;">Order ID:</span><strong>#${escapeHtml(order.id)}</strong></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#8A7565;">Payment:</span><strong>${payStatus}</strong></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#8A7565;">Total:</span><strong style="color:#2C1A14;font-size:18px;">₹${Number(order.total).toLocaleString('en-IN')}</strong></div>
+        <div style="display:flex;justify-content:space-between;"><span style="color:#8A7565;">Est. Delivery:</span><span>4–7 business days</span></div>
       </div>
       <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px;">
-        <thead><tr style="background:#A435F0;color:#fff;">
-          <th style="padding:10px 12px;text-align:left;">Item</th>
-          <th style="padding:10px 12px;text-align:center;">Qty</th>
-          <th style="padding:10px 12px;text-align:right;">Amount</th>
+        <thead><tr style="border-bottom:2px solid #2C1A14;color:#8A7565;text-transform:uppercase;font-size:12px;">
+          <th style="padding-bottom:10px;text-align:left;">Item</th>
+          <th style="padding-bottom:10px;text-align:center;">Qty</th>
+          <th style="padding-bottom:10px;text-align:right;">Amount</th>
         </tr></thead>
-        <tbody>${itemsHtml}</tbody>
+        <tbody>${itemsHtml || `<tr><td colspan="3" style="padding:14px 0;text-align:center;">Handcrafted Creation</td></tr>`}</tbody>
       </table>
-      ${order.payment_mode === 'prepaid' && order.payment_status !== 'paid' ? `
-      <div style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#92400e;">
-        💳 <strong>Payment Pending.</strong> Please complete the payment to confirm your order. We've shared the payment link separately.
-      </div>` : ''}
-      ${order.payment_mode === 'cod' ? `
-      <div style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#92400e;">
-        💵 <strong>Cash on Delivery.</strong> A small advance may be required to confirm dispatch. Our team will WhatsApp you shortly.
-      </div>` : ''}
-      <a href="${escapeHtml(trackLink)}" style="display:inline-block;background:linear-gradient(135deg,#A435F0,#7818C2);color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">📦 Track Your Order</a>
-      <p style="margin:20px 0 0;font-size:12px;color:#9B82B8;line-height:1.6;">If you have any questions, just reply to this email or WhatsApp us at +91 ${escapeHtml((SETTINGS_WA || '98372 29280'))}.<br>Thank you for shopping with Tish Creations 💖</p>
+      ${addressHtml ? `<div style="background:#FAF6EE;padding:16px;border-radius:10px;font-size:13.5px;color:#5A4636;margin-bottom:20px;"><b>Shipping Address:</b><br>${addressHtml}</div>` : ''}
+      <a href="${escapeHtml(trackLink)}" style="display:inline-block;background:#D4AF37;color:#2C1A14;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:800;font-size:14px;box-shadow:0 3px 10px rgba(212,175,55,0.3);">📦 Track Your Order</a>
+      <p style="margin:24px 0 0;font-size:12.5px;color:#8A7565;line-height:1.6;">If you have any questions, just reply to this email or WhatsApp us at +91 ${escapeHtml((SETTINGS_WA || '98372 29280'))}.<br>Thank you for shopping with Tish Creations 💖</p>
     </div>
-    <div style="background:#1F0A33;color:#9B82B8;padding:16px 32px;font-size:11px;text-align:center;">© 2026 Tish Creations · @garimasetiya · Meerut, UP, India</div>
+    <div style="background:#2C1A14;color:#C6A87D;padding:16px 32px;font-size:11px;text-align:center;">© 2026 Tish Creations · @garimasetiya · Meerut, UP, India</div>
   </div></body></html>`;
-  const text = `Tish Creations — Order Confirmation\n\nHi ${order.customer_name || 'there'},\n\nThank you for your order!\n\nOrder ID: #${order.id}\nTotal: ₹${Number(order.total).toLocaleString('en-IN')}\nPayment: ${payStatus}\nDelivery: 10-12 days\n\nTrack your order: ${trackLink}\n\nThank you for shopping with Tish Creations!`;
+  const text = `Tish Creations — Order Confirmation\n\nHi ${firstName},\n\nThank you for your order!\n\nOrder ID: #${order.id}\nTotal: ₹${Number(order.total).toLocaleString('en-IN')}\nPayment: ${payStatus}\nDelivery: 4-7 business days\n\nTrack your order: ${trackLink}\n\nThank you for shopping with Tish Creations!`;
   try {
     await mailer.sendMail({
       from: MAIL_FROM,
@@ -289,6 +291,7 @@ async function sendOrderConfirmationEmail(order, customerEmail) {
     return false;
   }
 }
+const sendOrderPlacedEmail = sendOrderConfirmationEmail;
 
 async function sendOrderConfirmedReceiptEmail(order, waybillOrTracking, extraNote) {
   const mailer = getMailer();
@@ -878,6 +881,7 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS email_otp_sent_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_email ON customers (lower(email));
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_google_sub ON customers (google_sub) WHERE google_sub IS NOT NULL;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS weight_grams INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_qty INTEGER;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ DEFAULT now();
@@ -1007,11 +1011,11 @@ async function seedProductsIfEmpty() {
       await client.query('BEGIN');
       for (const p of SEED_PRODUCTS) {
         await client.query(
-          `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING`,
+          `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams, stock_qty)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING`,
           [p.id, p.name, p.category, p.price,
           Number.isFinite(Number(p.originalPrice)) ? Number(p.originalPrice) : null,
-          p.image, p.inStock !== false, p.description, p.weightGrams ?? 100]
+          p.image, p.inStock !== false, p.description, p.weightGrams ?? 100, p.stock ?? null]
         );
       }
       await client.query('COMMIT');
@@ -1026,7 +1030,8 @@ async function getProducts() {
   const { rows } = await pool.query(
     `SELECT id, title AS name, category, base_price AS price, original_price AS "originalPrice",
             image_url AS image, in_stock AS "inStock", description,
-            weight_grams AS "weightGrams", COALESCE(weight_grams, 100)::numeric / 1000.0 AS weight
+            weight_grams AS "weightGrams", COALESCE(weight_grams, 100)::numeric / 1000.0 AS weight,
+            stock_qty AS "stock"
        FROM products ORDER BY created_at DESC`
   );
   return rows;
@@ -1503,8 +1508,11 @@ async function computeOrderTotals(items, paymentMode, pincode) {
     const p = byId[String(it && it.id)];
     // Fail closed: only an explicitly in-stock item is orderable. Previously
     // `=== false` let null/undefined/0 slip through as if in stock.
-    if (!p || !p.inStock) { const e = new Error('Item unavailable'); e.code = 'ITEM_UNAVAILABLE'; throw e; }
+    if (!p || !p.inStock) { const e = new Error(`Item "${p?.name || it?.id}" is currently out of stock`); e.code = 'ITEM_UNAVAILABLE'; throw e; }
     const qty = Math.max(1, Math.min(999, parseInt(it.qty, 10) || 1));
+    if (p.stock != null && p.stock !== '' && Number.isFinite(Number(p.stock)) && Number(p.stock) < qty) {
+      const e = new Error(`Only ${p.stock} unit(s) left in stock for "${p.name}"`); e.code = 'ITEM_UNAVAILABLE'; throw e;
+    }
     subtotal += Number(p.price) * qty;
     const wg = p.weightGrams != null ? Number(p.weightGrams) : (p.weight != null ? Number(p.weight)*1000 : 100);
     totalWeightGrams += (wg || 100) * qty;
@@ -1547,8 +1555,13 @@ async function createOrder(o) {
       o.shipping_address ? JSON.stringify(o.shipping_address) : null,
       o.guest_token || null, o.coupon_code || null]);
     for (const it of (o.items || [])) {
+      const itemQty = Math.max(1, parseInt(it.qty, 10) || 1);
       await client.query('INSERT INTO order_items (order_id, product_id, qty, unit_price) VALUES ($1,$2,$3,$4)',
-        [o.id, String(it.id), Math.max(1, parseInt(it.qty, 10) || 1), Number(it.price) || 0]);
+        [o.id, String(it.id), itemQty, Number(it.price) || 0]);
+      await client.query(
+        `UPDATE products SET stock_qty = GREATEST(0, stock_qty - $2),
+         in_stock = CASE WHEN (stock_qty - $2) <= 0 THEN FALSE ELSE in_stock END
+         WHERE id = $1 AND stock_qty IS NOT NULL`, [String(it.id), itemQty]);
     }
     await client.query('COMMIT');
   } catch (e) { await client.query('ROLLBACK'); throw e; }
@@ -1557,21 +1570,32 @@ async function createOrder(o) {
 }
 async function getOrdersByCustomer(customerId) {
   if (!pool) return mem.orders.filter((o) => o.customer_id === customerId);
-  // Join with order_items so the customer can see WHAT they ordered, not just the total.
   const { rows } = await pool.query(
-    `SELECT o.*, COALESCE(json_agg(json_build_object('id', oi.product_id, 'qty', oi.qty, 'price', oi.unit_price) ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') AS items
-       FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id
+    `SELECT o.*, COALESCE(json_agg(json_build_object('id', oi.product_id, 'name', COALESCE(p.title, oi.product_id), 'qty', oi.qty, 'price', oi.unit_price) ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') AS items
+       FROM orders o
+       LEFT JOIN order_items oi ON oi.order_id = o.id
+       LEFT JOIN products p ON p.id = oi.product_id
       WHERE o.customer_id = $1 GROUP BY o.id ORDER BY o.created_at DESC`, [customerId]);
   return rows;
 }
 async function getOrderById(id) {
   if (!pool) return mem.orders.find((o) => o.id === id) || null;
-  const { rows } = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
+  const { rows } = await pool.query(
+    `SELECT o.*, COALESCE(json_agg(json_build_object('id', oi.product_id, 'name', COALESCE(p.title, oi.product_id), 'qty', oi.qty, 'price', oi.unit_price) ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') AS items
+       FROM orders o
+       LEFT JOIN order_items oi ON oi.order_id = o.id
+       LEFT JOIN products p ON p.id = oi.product_id
+      WHERE o.id = $1 GROUP BY o.id`, [id]);
   return rows[0] || null;
 }
 async function getAllOrders() {
   if (!pool) return mem.orders;
-  const { rows } = await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 500');
+  const { rows } = await pool.query(
+    `SELECT o.*, COALESCE(json_agg(json_build_object('id', oi.product_id, 'name', COALESCE(p.title, oi.product_id), 'qty', oi.qty, 'price', oi.unit_price) ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') AS items
+       FROM orders o
+       LEFT JOIN order_items oi ON oi.order_id = o.id
+       LEFT JOIN products p ON p.id = oi.product_id
+      GROUP BY o.id ORDER BY o.created_at DESC LIMIT 500`);
   return rows;
 }
 async function updateOrder(id, { status, trackingNumber, carrier }) {
@@ -1956,12 +1980,13 @@ app.post('/api/products', requireAdmin, async (req, res) => {
     if (id && !/^p[0-9a-zA-Z_-]{0,59}$/.test(id)) return res.status(400).json({ error: 'Invalid product id (must match ^p[0-9a-zA-Z_-]{0,59}$)' });
     if (!id) id = 'p_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
     const weightGrams = Math.max(10, Math.min(50000, Math.round(Number(b.weightGrams ?? (b.weight != null ? b.weight * 1000 : 100)) || 100)));
+    const stockQty = (b.stock != null && b.stock !== '' && Number.isFinite(Number(b.stock))) ? Math.max(0, Math.round(Number(b.stock))) : null;
     await pool.query(
-      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8, weight_grams=$9`,
+      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams, stock_qty)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8, weight_grams=$9, stock_qty=$10`,
       [id, name, category, price, Number.isFinite(Number(b.originalPrice)) ? Number(b.originalPrice) : null,
-        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams]
+        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams, stockQty]
     );
     res.json({ ok: true, id });
   } catch (e) { console.error('save product:', e.message); res.status(500).json({ error: 'Could not save product' }); }
@@ -2700,7 +2725,7 @@ app.get('/api/customer/me', async (req, res) => {
   try {
     const c = await findCustomerById(req.session.customerId);
     if (!c) { req.session.customerId = null; return res.json({ customer: null }); }
-    res.json({ customer: { id: c.id, name: c.name || req.session.customerName || '', email: c.email || '', emailVerified: c.email_verified !== false } });
+    res.json({ customer: { id: c.id, name: c.name || req.session.customerName || '', email: c.email || '', phone: c.phone || '', address: c.address || null, emailVerified: c.email_verified !== false } });
   } catch (e) {
     // DB hiccup — fall back to the session copy so the UI still shows signed-in state.
     res.json({ customer: { id: req.session.customerId, name: req.session.customerName || '' } });
@@ -2856,24 +2881,20 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
   }
   const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, MAX_ITEMS) : [];
   if (!items.length) return res.status(400).json({ error: 'Cart is empty' });
-  // If signed in, verify email (defense in depth) and fall back to account email.
-  if (req.session?.customerId) {
-    try {
-      const acct = await findCustomerById(req.session.customerId);
-      if (acct && EMAIL_VERIFICATION_ON && acct.email_verified === false)
-        return res.status(403).json({ error: 'Please verify your email before placing an order.', needsVerification: true, email: acct.email });
-      if (req.body?.customer && !req.body.customer.email && acct) req.body.customer.email = acct.email || '';
-    } catch (e) { console.error('order acct check:', e.message); }
-  } else {
-    // Guest: require name, email, and phone so the store can contact them.
-    const gc = req.body?.customer || {};
-    if (!gc.name || !gc.email || !gc.phone)
-      return res.status(400).json({ error: 'Name, email, and phone are required for guest checkout.' });
-    // Validate the email FORMAT, not just that it's non-empty — otherwise garbage
-    // gets stored as customer_email and confirmation emails silently fail.
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(gc.email).trim()))
-      return res.status(400).json({ error: 'Please enter a valid email address for order updates.' });
+  // Enforce e-commerce standard: every order must belong to a logged-in authenticated customer.
+  if (!req.session?.customerId) {
+    return res.status(401).json({ error: 'Please sign in or create an account to place your order.', needsLogin: true });
   }
+  try {
+    const acct = await findCustomerById(req.session.customerId);
+    if (!acct) return res.status(401).json({ error: 'Please sign in or create an account to place your order.', needsLogin: true });
+    if (EMAIL_VERIFICATION_ON && acct.email_verified === false)
+      return res.status(403).json({ error: 'Please verify your email before placing an order.', needsVerification: true, email: acct.email });
+    if (!req.body.customer) req.body.customer = {};
+    if (!req.body.customer.email && acct.email) req.body.customer.email = acct.email;
+    if (!req.body.customer.name && acct.name) req.body.customer.name = acct.name;
+    if (!req.body.customer.phone && acct.phone) req.body.customer.phone = acct.phone;
+  } catch (e) { console.error('order acct check:', e.message); }
   // Payment policy: Cash on Delivery is disabled by default (ALLOW_COD=false) —
   // every order must be paid online (Razorpay or UPI QR). A direct API call
   // with paymentMode:'cod' is rejected here, not just hidden in the UI.
@@ -3018,8 +3039,13 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
           order.shipping_address ? JSON.stringify(order.shipping_address) : null,
           order.guest_token || null, order.coupon_code || null]);
         for (const it of (order.items || [])) {
+          const itemQty = Math.max(1, parseInt(it.qty, 10) || 1);
           await txClient.query('INSERT INTO order_items (order_id, product_id, qty, unit_price) VALUES ($1,$2,$3,$4)',
-            [order.id, String(it.id), Math.max(1, parseInt(it.qty, 10) || 1), Number(it.price) || 0]);
+            [order.id, String(it.id), itemQty, Number(it.price) || 0]);
+          await txClient.query(
+            `UPDATE products SET stock_qty = GREATEST(0, stock_qty - $2),
+             in_stock = CASE WHEN (stock_qty - $2) <= 0 THEN FALSE ELSE in_stock END
+             WHERE id = $1 AND stock_qty IS NOT NULL`, [String(it.id), itemQty]);
         }
         await txClient.query('COMMIT');
         // COMMIT succeeded — release the connection back to the pool.
@@ -3063,6 +3089,11 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
     const isUpi = paymentMethod === 'upi';
     if (paymentMode !== 'prepaid' || isUpi) {
       sendOwnerOrderNotification(order).catch(e => console.error('owner notify bg:', e.message));
+    }
+    // Save shipping address to customer profile (`address` JSONB) for 1-click reuse next time.
+    if (order.customer_id && pool && order.shipping_address) {
+      pool.query('UPDATE customers SET address = $1, name = COALESCE(name, $2), phone = COALESCE(phone, $3) WHERE id = $4',
+        [JSON.stringify(order.shipping_address), order.customer_name, order.customer_phone, order.customer_id]).catch(() => {});
     }
     // They ordered — clear any pending abandoned-cart reminder for this contact.
     markCartConverted(custEmail || c.email, c.phone).catch(() => { });
@@ -3258,11 +3289,15 @@ app.post('/api/admin/orders/:id/send-confirmed-receipt', requireAdmin, async (re
   try {
     const o = await getOrderById(String(req.params.id).slice(0, 60));
     if (!o) return res.status(404).json({ error: 'Order not found' });
+    if (!o.customer_email) return res.status(400).json({ error: 'Customer email address missing on order' });
+    const mailer = getMailer();
+    if (!mailer) return res.status(400).json({ error: 'SMTP email server not configured in environment (MAIL_HOST / MAIL_USER)' });
     const sent = await sendOrderConfirmedReceiptEmail(o, o.tracking_number || null, 'Manual admin resend');
-    res.json({ ok: sent });
+    if (!sent) return res.status(500).json({ error: 'Email sending failed — check SMTP logs/configuration' });
+    res.json({ ok: true });
   } catch(e) {
     console.error('send-confirmed-receipt:', e.message);
-    res.status(500).json({ error: 'Could not send receipt email' });
+    res.status(500).json({ error: 'Could not send receipt email: ' + e.message });
   }
 });
 
