@@ -204,7 +204,7 @@ if (isProd) {
 // Set RESEND_API_KEY in Railway Variables to enable emails.
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 
-const MAIL_FROM = 'Tish Creations <onboarding@resend.dev>';
+const MAIL_FROM = 'Tish Creations <noreply@tishcreations.in>';
 
 // Unified send function — replaces nodemailer.sendMail() everywhere.
 // Returns true on success, false on failure. Never throws.
