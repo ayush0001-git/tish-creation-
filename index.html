@@ -999,7 +999,17 @@
     .ad-card>*{min-width:0}
     @media(max-width:600px){.ad-card{grid-template-columns:1fr}}
     .ad-thumb img{width:112px;height:124px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--cream)}
-    @media(max-width:600px){.ad-thumb{display:flex;gap:12px;align-items:center}.ad-thumb img{width:88px;height:96px}}
+    .ad-thumb-hint{font-size:10.5px;color:var(--muted);line-height:1.4;margin-top:4px;max-width:160px}
+    @media(max-width:600px){.ad-thumb{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.ad-thumb img{width:88px;height:96px}.ad-thumb-hint{max-width:none}}
+    /* gallery thumbnails under the main photo */
+    .ad-extras-wrap{margin:10px 0 12px}
+    .ad-extras-wrap>label{font-size:11.5px;font-weight:600;color:var(--ink);letter-spacing:.02em;margin-bottom:6px;display:block}
+    .ad-extras{display:flex;flex-wrap:wrap;gap:8px;padding:8px;border:1px dashed var(--line);border-radius:10px;background:#faf6ee;min-height:54px;align-items:center}
+    .ad-extra{position:relative;width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--line);background:#fff;flex-shrink:0}
+    .ad-extra img{width:100%;height:100%;object-fit:cover;display:block}
+    .ad-extra button{position:absolute;top:2px;right:2px;width:20px;height:20px;border:none;border-radius:50%;background:rgba(31,10,51,.85);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;transition:background .2s}
+    .ad-extra button:hover{background:#c0392b}
+    .ad-extra-empty{font-size:11.5px;color:var(--muted);font-style:italic;padding:6px 4px}
     .ad-up{margin-top:8px;width:112px;background:var(--ink);color:var(--gold-l);border:none;border-radius:8px;padding:9px 6px;font-size:10.5px;font-weight:700;letter-spacing:.06em}
     @media(max-width:600px){.ad-up{margin-top:0;width:auto;padding:9px 14px}}
     .ad-row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -3429,7 +3439,12 @@
     ADMIN.tab = t.dataset.tab; renderAdminTab();
   }));
 
-  function imgFieldNote(img){ return String(img||"").startsWith("data:") ? "(uploaded photo is set — entering a URL will replace it)" : ""; }
+  function imgFieldNote(img){
+    const s = String(img||"");
+    if (s.startsWith("data:")) return "(photo is stored on this device only — uploading to server will fix this)";
+    if (s.startsWith("/api/img/")) return "✓ stored on your server — no need to change this URL";
+    return "";
+  }
 
   function renderAdminTab(){
     const body = $("#adBody");
@@ -3438,16 +3453,37 @@
       body.innerHTML = '<button class="ad-add" id="adAddProd">➕ Add a new product</button>'
         + DATA.products.map(p=>{
           const urlVal = String(p.img||"").startsWith("data:") ? "" : esc(p.img||"");
+          // Gallery = everything in p.images that isn't the main image itself,
+          // and isn't a local-only data: URL (those are useless on the live site).
+          const gallery = Array.isArray(p.images)
+            ? p.images.filter(u => u && u !== p.img && !String(u).startsWith("data:"))
+            : [];
+          const galleryHTML = gallery.length
+            ? gallery.map((u, i) =>
+                '<div class="ad-extra" data-gi="'+i+'">'
+                + '<img src="'+esc(u)+'" alt="" loading="lazy">'
+                + '<button type="button" data-rmextra title="Remove">×</button>'
+                + '</div>'
+              ).join("")
+            : '<div class="ad-extra-empty">No gallery photos yet — pick 1 or more photos above to add some.</div>';
           return '<div class="ad-card" data-pid="'+esc(p.id)+'">'
-          + '<div class="ad-thumb"><img src="'+esc(p.img||PLC)+'" alt=""><button class="ad-up" data-act="upimg">📷 Photo upload</button></div>'
+          + '<div class="ad-thumb">'
+          +   '<img src="'+esc(p.img||PLC)+'" alt="">'
+          +   '<button class="ad-up" data-act="upimg">📷 Upload photos</button>'
+          +   '<div class="ad-thumb-hint">Pick one or more · 1st becomes the main photo, rest go to the gallery</div>'
+          + '</div>'
           + '<div>'
           + '<label>Name</label><input data-f="name" value="'+esc(p.name)+'">'
           + '<div class="ad-row2"><div><label>Price ₹</label><input type="number" inputmode="numeric" data-f="price" value="'+esc(p.price)+'"></div>'
           + '<div><label>MRP ₹ (cut price)</label><input type="number" inputmode="numeric" data-f="was" value="'+(p.was==null?"":esc(p.was))+'"></div></div>'
           + '<div class="ad-row2"><div><label>Weight (grams)</label><input type="number" inputmode="numeric" data-f="weightGrams" value="'+esc(p.weightGrams ?? Math.round((p.weight || 0.1)*1000))+'" placeholder="100"></div>'
           + '<div><label>Category</label><select data-f="cat">'+catOpts(p.cat)+'</select></div></div>'
-          + '<label>Image URL <small style="text-transform:none;letter-spacing:0">'+imgFieldNote(p.img)+'</small></label><input data-f="img" placeholder="https://…" value="'+urlVal+'">'
-          + '<label>Extra photos <small style="text-transform:none;letter-spacing:0">one URL per line — shown as a thumbnail gallery on the product page</small></label><textarea data-f="images" rows="2" placeholder="https://…&#10;https://…">'+esc(Array.isArray(p.images)?p.images.filter(u=>u&&u!==p.img&&!String(u).startsWith("data:")).join("\n"):"")+'</textarea>'
+          + '<input type="hidden" data-f="img" value="'+urlVal+'">'
+          + '<input type="hidden" data-f="images" value="'+esc(gallery.join("\n"))+'">'
+          + '<div class="ad-extras-wrap">'
+          +   '<label>📸 Gallery <small style="text-transform:none;letter-spacing:0;font-weight:400">— click × to remove a photo</small></label>'
+          +   '<div class="ad-extras">'+galleryHTML+'</div>'
+          + '</div>'
           + '<div class="ad-row2"><div><label>Badge</label><select data-f="badge">'+BADGES.map(b=>'<option value="'+b+'"'+(b===(p.badge||"")?" selected":"")+'>'+(b||"— none —")+'</option>').join("")+'</select></div><div></div></div>'
           + '<label>Short detail line</label><input data-f="spec" value="'+esc(p.spec||"")+'">'
           + '<div class="ad-flags">'
@@ -3457,7 +3493,7 @@
           + '</div></div></div>';
         }).join("");
       $("#adAddProd").addEventListener("click", ()=>{
-        DATA.products.unshift({ id:"p_"+Date.now().toString(36), name:"New Product", cat:"jewelry", price:99, was:null, spec:"", img:PLC, badge:"New", feat:false, hide:false, weightGrams:100 });
+        DATA.products.unshift({ id:"p_"+Date.now().toString(36), name:"New Product", cat:"jewelry", price:99, was:null, spec:"", img:PLC, badge:"New", feat:false, hide:false, weightGrams:100, images:[] });
         renderAdminTab(); renderFilters(); renderGrids(); toast("New product added — fill in the details");
       });
     } else if (ADMIN.tab === "orders"){
@@ -3729,16 +3765,66 @@
     if (up){
       const card = up.closest("[data-pid]");
       const p = DATA.products.find(x=>x.id===card.dataset.pid); if(!p) return;
-      return pickImage(async (url, isLive)=>{
-        p.img = url; card.querySelector(".ad-thumb img").src = url; card.querySelector('[data-f="img"]').value = ""; renderGrids(); refreshWishUI();
-        if (isLive){
-          // Save this product immediately so its new photo URL sticks on the server.
-          try {
-            await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
-              body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:url }) });
-          } catch(e){}
+      // Multi-select picker — owner picks 1 or many photos. First one becomes
+      // the main image, the rest go into p.images (the gallery). URLs are
+      // auto-managed in the hidden inputs; the owner never sees a URL.
+      return pickImages(async (urls)=>{
+        if (!urls.length) return;
+        p.img = urls[0];
+        if (!Array.isArray(p.images)) p.images = [];
+        // Append new ones to existing gallery, dedup against the main image
+        for (const u of urls) {
+          if (u && u !== p.img && !p.images.includes(u)) p.images.push(u);
         }
+        // Re-render just this card's image parts (cheaper than renderAdminTab)
+        card.querySelector(".ad-thumb img").src = p.img;
+        const urlField = card.querySelector('[data-f="img"]');
+        const galleryField = card.querySelector('[data-f="images"]');
+        if (urlField) urlField.value = String(p.img).startsWith("data:") ? "" : p.img;
+        if (galleryField) galleryField.value = (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:")).join("\n");
+        // Update the visible gallery (replace the empty-state hint if it was there)
+        const galleryEl = card.querySelector(".ad-extras");
+        if (galleryEl){
+          const gallery = (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:"));
+          if (gallery.length){
+            galleryEl.innerHTML = gallery.map((u, i) =>
+              '<div class="ad-extra" data-gi="'+i+'">'
+              + '<img src="'+esc(u)+'" alt="" loading="lazy">'
+              + '<button type="button" data-rmextra title="Remove">×</button>'
+              + '</div>'
+            ).join("");
+          }
+        }
+        renderGrids(); refreshWishUI();
+        // Save product once with the new main image (gallery stays local — server
+        // has no "extra images" field, and that's fine: gallery re-syncs when
+        // owner uses "Download index.html" + re-deploy).
+        try {
+          await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
+            body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:p.img }) });
+        } catch(e){}
       });
+    }
+    // × button on a gallery thumbnail — remove just that photo
+    const rm = e.target.closest("[data-rmextra]");
+    if (rm){
+      const card = rm.closest("[data-pid]");
+      const p = DATA.products.find(x=>x.id===card.dataset.pid); if(!p) return;
+      const galleryEl = rm.closest(".ad-extras");
+      const idx = +rm.closest(".ad-extra").dataset.gi;
+      const gallery = (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:"));
+      if (idx < 0 || idx >= gallery.length) return;
+      // Splice from BOTH the original p.images (which may have leading data: or main img) and the gallery
+      const removed = gallery[idx];
+      p.images = (p.images||[]).filter(u => u !== removed);
+      const galleryField = card.querySelector('[data-f="images"]');
+      if (galleryField) galleryField.value = (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:")).join("\n");
+      rm.closest(".ad-extra").remove();
+      // If gallery is now empty, show the empty hint again
+      if (galleryEl && !galleryEl.children.length){
+        galleryEl.innerHTML = '<div class="ad-extra-empty">No gallery photos yet — pick 1 or more photos above to add some.</div>';
+      }
+      return;
     }
     const del = e.target.closest("[data-act='del']");
     if (del){
@@ -3779,39 +3865,62 @@
   function pickImage(cb){
     const inp = document.createElement("input");
     inp.type = "file"; inp.accept = "image/*";
-    inp.onchange = ()=>{
+    inp.onchange = async ()=>{
       const f = inp.files && inp.files[0]; if(!f) return;
-      const url = URL.createObjectURL(f);
-      const img = new Image();
-      img.onload = async ()=>{
-        const MAX = 1200, sc = Math.min(1, MAX/Math.max(img.width, img.height));
-        const c = document.createElement("canvas");
-        c.width = Math.max(1, Math.round(img.width*sc)); c.height = Math.max(1, Math.round(img.height*sc));
-        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-        URL.revokeObjectURL(url);
-        let dataUrl;
-        try { dataUrl = c.toDataURL("image/jpeg", 0.82); }
-        catch(e){ toast("Photo could not be processed — try another one"); return; }
-        // Upload to the server so it's live for everyone, right now.
-        if (TC_CONFIG.apiEnabled && ADMIN && ADMIN.authed){
-          toast("⏳ Uploading photo…");
-          try {
-            const r = await fetch(TC_CONFIG.backendUrl + "/api/upload", {
-              method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
-              body: JSON.stringify({ dataUrl })
-            });
-            const d = await r.json().catch(()=>({}));
-            if (r.ok && d.url){ cb(d.url, true); toast("✅ Photo uploaded — live now!"); return; }
-            toast(d.error || "Upload failed — saved on this device only");
-          } catch(e){ toast("Could not reach server — saved on this device only"); }
-        }
-        // Fallback: local preview only (owner sees it, but not live for others)
-        cb(dataUrl, false);
-      };
-      img.onerror = ()=>{ URL.revokeObjectURL(url); toast("This photo could not load — try another one"); };
-      img.src = url;
+      const url = await processOneFile(f, "⏳ Uploading photo…");
+      if (url === null) return; // already toasted
+      cb(url, !String(url).startsWith("data:"));
     };
     inp.click();
+  }
+  /* multi-file picker — same flow, returns an array of URLs.
+     Each file is processed in parallel; partial failures are reported. */
+  function pickImages(cb){
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = "image/*"; inp.multiple = true;
+    inp.onchange = async ()=>{
+      const files = Array.from(inp.files || []);
+      if (!files.length) return;
+      const n = files.length;
+      toast(n > 1 ? "⏳ Uploading " + n + " photos…" : "⏳ Uploading photo…");
+      const results = await Promise.all(files.map(f => processOneFile(f, null)));
+      const ok = results.filter(r => r !== null).length;
+      if (ok === n) toast("✅ " + n + " photo" + (n>1?"s":"") + " uploaded — live now!");
+      else if (ok > 0) toast("⚠️ " + ok + " of " + n + " uploaded — check the ones that failed");
+      else toast("❌ Upload failed — please try again");
+      cb(results.filter(r => r !== null));
+    };
+    inp.click();
+  }
+  /* Resize one File to a JPEG data URL, then POST it to /api/upload so it lives
+     on the server (returns "/api/img/..."). Falls back to a local data URL
+     if the server is unreachable. Returns null on hard failure. */
+  async function processOneFile(f, singleStatus){
+    try {
+      const objUrl = URL.createObjectURL(f);
+      const img = await new Promise((res, rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=objUrl; });
+      URL.revokeObjectURL(objUrl);
+      const MAX = 1200, sc = Math.min(1, MAX/Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.width*sc)); c.height = Math.max(1, Math.round(img.height*sc));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const dataUrl = c.toDataURL("image/jpeg", 0.82);
+      if (TC_CONFIG.apiEnabled && ADMIN && ADMIN.authed){
+        try {
+          const r = await fetch(TC_CONFIG.backendUrl + "/api/upload", {
+            method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
+            body: JSON.stringify({ dataUrl })
+          });
+          const d = await r.json().catch(()=>({}));
+          if (r.ok && d.url) return d.url;          // server URL — live for everyone
+          if (singleStatus) toast(d.error || "Upload failed — saved on this device only");
+        } catch(e){ if (singleStatus) toast("Could not reach server — saved on this device only"); }
+      }
+      return dataUrl;                                // local fallback (owner only)
+    } catch(e){
+      if (singleStatus) toast("Photo could not be processed — try another one");
+      return null;
+    }
   }
 
   /* save actions */
