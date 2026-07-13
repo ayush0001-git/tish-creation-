@@ -236,7 +236,7 @@ async function sendOrderConfirmationEmail(order, customerEmail) {
   const trackLink = order.guest_token
     ? `${origin}/#track?id=${encodeURIComponent(order.id)}&token=${encodeURIComponent(order.guest_token)}`
     : `${origin}/`;
-  
+
   const firstName = escapeHtml(String(order.customer_name || 'Customer').split(' ')[0] || 'there');
   const items = Array.isArray(order.items) ? order.items : [];
   const itemsHtml = items.map(it => `
@@ -248,7 +248,7 @@ async function sendOrderConfirmationEmail(order, customerEmail) {
   const payStatus = order.payment_status === 'paid' ? '✅ Paid' : (order.payment_mode === 'cod' ? '💵 Cash on Delivery' : '⏳ Prepaid / UPI');
 
   let addr = {};
-  if (typeof order.shipping_address === 'string') { try { addr = JSON.parse(order.shipping_address); } catch(e){} }
+  if (typeof order.shipping_address === 'string') { try { addr = JSON.parse(order.shipping_address); } catch (e) { } }
   else if (order.shipping_address && typeof order.shipping_address === 'object') { addr = order.shipping_address; }
   const addressHtml = [addr.line1, addr.line2, `${addr.city || ''} ${addr.state || ''}`.trim(), `PIN: ${addr.pincode || ''}`].filter(Boolean).join('<br>');
 
@@ -324,7 +324,7 @@ async function sendOrderConfirmedReceiptEmail(order, waybillOrTracking, extraNot
         [order.id]
       );
       if (rows.length) items = rows;
-    } catch(e){}
+    } catch (e) { }
   }
 
   let itemsRowsHtml = items.map(it => {
@@ -348,7 +348,7 @@ async function sendOrderConfirmedReceiptEmail(order, waybillOrTracking, extraNot
 
   let addr = {};
   if (typeof order.shipping_address === 'string') {
-    try { addr = JSON.parse(order.shipping_address); } catch(e){}
+    try { addr = JSON.parse(order.shipping_address); } catch (e) { }
   } else if (order.shipping_address && typeof order.shipping_address === 'object') {
     addr = order.shipping_address;
   }
@@ -1526,7 +1526,7 @@ async function computeOrderTotals(items, paymentMode, pincode) {
       const e = new Error(`Only ${p.stock} unit(s) left in stock for "${p.name}"`); e.code = 'ITEM_UNAVAILABLE'; throw e;
     }
     subtotal += Number(p.price) * qty;
-    const wg = p.weightGrams != null ? Number(p.weightGrams) : (p.weight != null ? Number(p.weight)*1000 : 100);
+    const wg = p.weightGrams != null ? Number(p.weightGrams) : (p.weight != null ? Number(p.weight) * 1000 : 100);
     totalWeightGrams += (wg || 100) * qty;
     orderItems.push({ id: String(it.id), qty, price: Number(p.price) });
   }
@@ -1668,7 +1668,7 @@ async function autoBookDelhiveryIfConfirmed(orderId) {
     try {
       const current = await getOrderById(orderId);
       if (current) sendOrderConfirmedReceiptEmail(current, current.tracking_number || null, 'Confirmed').catch(e => console.error('confirmed receipt email bg:', e.message));
-    } catch(e){}
+    } catch (e) { }
     return { waybill: null, note: 'Delhivery token not configured' };
   }
   try {
@@ -1686,13 +1686,13 @@ async function autoBookDelhiveryIfConfirmed(orderId) {
       const { rows } = await pool.query('SELECT product_id AS id, qty FROM order_items WHERE order_id=$1', [orderId]);
       rows.forEach(it => {
         const p = allProds.find(x => x.id === it.id);
-        const wg = p?.weightGrams != null ? Number(p.weightGrams) : (p?.weight != null ? Number(p.weight)*1000 : 100);
+        const wg = p?.weightGrams != null ? Number(p.weightGrams) : (p?.weight != null ? Number(p.weight) * 1000 : 100);
         totalWeightGrams += (wg || 100) * (it.qty || 1);
       });
     } else {
       items.forEach(it => {
         const p = allProds.find(x => x.id === it.id);
-        const wg = p?.weightGrams != null ? Number(p.weightGrams) : (p?.weight != null ? Number(p.weight)*1000 : 100);
+        const wg = p?.weightGrams != null ? Number(p.weightGrams) : (p?.weight != null ? Number(p.weight) * 1000 : 100);
         totalWeightGrams += (wg || 100) * (it.qty || 1);
       });
     }
@@ -1701,7 +1701,7 @@ async function autoBookDelhiveryIfConfirmed(orderId) {
 
     let addr = {};
     if (typeof current.shipping_address === 'string') {
-      try { addr = JSON.parse(current.shipping_address); } catch(e){}
+      try { addr = JSON.parse(current.shipping_address); } catch (e) { }
     } else if (current.shipping_address && typeof current.shipping_address === 'object') {
       addr = current.shipping_address;
     }
@@ -1743,9 +1743,9 @@ async function autoBookDelhiveryIfConfirmed(orderId) {
       try {
         const { rows } = await pool.query('SELECT data FROM site_settings WHERE id=1');
         if (rows[0]?.data?.delhiveryWarehouse) dbWarehouse = rows[0].data.delhiveryWarehouse;
-      } catch(e){}
+      } catch (e) { }
     }
-    let pickupName = dbWarehouse || process.env.DELHIVERY_PICKUP_LOCATION || 'Tish Creations';
+    let pickupName = dbWarehouse || process.env.DELHIVERY_PICKUP_LOCATION || 'My Warehouse';
     payload.pickup_location = { name: pickupName };
 
     if (!axios) throw new Error('axios not installed');
@@ -1767,27 +1767,48 @@ async function autoBookDelhiveryIfConfirmed(orderId) {
     if (!delivRes.data?.success && delivRes.data?.packages?.[0]?.status !== 'Success' && /clientwarehouse|pickup|warehouse/i.test(String(checkErr))) {
       try {
         console.log('Delhivery ClientWarehouse error detected. Auto-querying Delhivery for registered warehouse list...');
-        const wRes = await axios.get('https://track.delhivery.com/api/backend/clientwarehouse/create/', {
+
+        // ✅ FIX: Use correct endpoint with GET (not /create/)
+        const wRes = await axios.get('https://track.delhivery.com/api/backend/clientwarehouse/', {
           headers: { Authorization: `Token ${DELHIVERY_TOKEN}`, Accept: 'application/json' },
           timeout: 8000
         });
-        const wList = Array.isArray(wRes.data) ? wRes.data : (wRes.data?.data || wRes.data?.warehouses || []);
-        if (wList && wList.length > 0 && wList[0].name && wList[0].name !== pickupName) {
+
+        const wList = Array.isArray(wRes.data?.data) ? wRes.data.data
+          : Array.isArray(wRes.data) ? wRes.data
+            : [];
+
+        if (wList.length > 0 && wList[0].name && wList[0].name !== pickupName) {
           pickupName = wList[0].name;
-          console.log(`Auto-discovered registered Delhivery warehouse name: "${pickupName}". Retrying shipment creation...`);
+          console.log(`Auto-discovered warehouse: "${pickupName}". Retrying...`);
           if (pool) {
             try {
               await pool.query(
                 `INSERT INTO site_settings (id, data, updated_at) VALUES (1, $1::jsonb, now())
-                 ON CONFLICT (id) DO UPDATE SET data = site_settings.data || $1::jsonb, updated_at = now()`,
+             ON CONFLICT (id) DO UPDATE SET data = site_settings.data || $1::jsonb, updated_at = now()`,
                 [JSON.stringify({ delhiveryWarehouse: pickupName })]
               );
-            } catch(e){}
+            } catch (e) { }
           }
           delivRes = await sendCreate(pickupName);
+        } else {
+          // ✅ FIX: Fallback to env var or 'My Warehouse' if list empty/unavailable
+          const fallback = process.env.DELHIVERY_PICKUP_LOCATION || 'My Warehouse';
+          if (fallback !== pickupName) {
+            pickupName = fallback;
+            console.log(`Falling back to warehouse: "${pickupName}". Retrying...`);
+            delivRes = await sendCreate(pickupName);
+          }
         }
       } catch (wErr) {
-        console.warn('Could not auto-fetch warehouse list from Delhivery API:', wErr?.message);
+        console.warn('Could not auto-fetch warehouse list:', wErr?.message);
+        // ✅ FIX: Still retry with known warehouse name
+        const fallback = process.env.DELHIVERY_PICKUP_LOCATION || 'My Warehouse';
+        if (fallback !== pickupName) {
+          pickupName = fallback;
+          console.log(`Error fallback — retrying with: "${pickupName}"`);
+          delivRes = await sendCreate(pickupName);
+        }
       }
     }
 
@@ -1809,7 +1830,7 @@ async function autoBookDelhiveryIfConfirmed(orderId) {
     try {
       const current = await getOrderById(orderId);
       if (current) sendOrderConfirmedReceiptEmail(current, current.tracking_number || null, `Delhivery error: ${err?.message || err}`).catch(e => console.error('confirmed receipt email bg:', e.message));
-    } catch(e){}
+    } catch (e) { }
     return { waybill: null, note: `Delhivery error: ${err?.message || err}` };
   }
 }
@@ -3123,7 +3144,7 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
     // Save shipping address to customer profile (`address` JSONB) for 1-click reuse next time.
     if (order.customer_id && pool && order.shipping_address) {
       pool.query('UPDATE customers SET address = $1, name = COALESCE(name, $2), phone = COALESCE(phone, $3) WHERE id = $4',
-        [JSON.stringify(order.shipping_address), order.customer_name, order.customer_phone, order.customer_id]).catch(() => {});
+        [JSON.stringify(order.shipping_address), order.customer_name, order.customer_phone, order.customer_id]).catch(() => { });
     }
     // They ordered — clear any pending abandoned-cart reminder for this contact.
     markCartConverted(custEmail || c.email, c.phone).catch(() => { });
@@ -3237,7 +3258,7 @@ app.get('/api/orders/track', async (req, res) => {
             expected: shipmentData.ExpectedDeliveryDate || ''
           };
         }
-      } catch(delivErr) {
+      } catch (delivErr) {
         console.warn('Could not fetch live Delhivery scan for tracking:', delivErr?.message);
       }
     }
@@ -3342,7 +3363,7 @@ app.post('/api/admin/orders/:id/send-confirmed-receipt', requireAdmin, async (re
     const sent = await sendOrderConfirmedReceiptEmail(o, o.tracking_number || null, 'Manual admin resend');
     if (!sent) return res.status(500).json({ error: 'Email sending failed — check SMTP logs/configuration' });
     res.json({ ok: true });
-  } catch(e) {
+  } catch (e) {
     console.error('send-confirmed-receipt:', e.message);
     res.status(500).json({ error: 'Could not send receipt email: ' + e.message });
   }
