@@ -2973,6 +2973,7 @@
           + '<div class="ord-bot"><span class="ot">'+inr(Number(o.total)||0)+'</span>'
           + chip(esc(o.status||"pending"), STATUS_LABEL[o.status]||o.status) + payChip
           + '<button class="ord-track" data-ac="trk-open" data-id="'+esc(o.id)+'">Track →</button></div>'
+          + (o.tracking_number ? '<div style="margin-top:8px;padding:8px 10px;background:#fdfbf7;border:1px dashed #c6a87d;border-radius:8px;font-size:12.5px;display:flex;justify-content:space-between;align-items:center"><span>🚚 <b>Delhivery AWB:</b> '+esc(o.tracking_number)+'</span><a href="https://www.delhivery.com/track/package/'+encodeURIComponent(o.tracking_number)+'" target="_blank" rel="noopener" style="background:#2c1a14;color:#f0d9a8;padding:4px 10px;border-radius:6px;text-decoration:none;font-weight:700;font-size:11.5px">Track Live ↗</a></div>' : '')
           + actions
           + '</div>';
       }).join("") + '</div>';
@@ -3020,18 +3021,22 @@
         return '<div class="trk-step '+cls+'"><span class="dot">'+(i<idx?"✓":(i===idx?"●":""))+'</span><span class="tl">'+s[1]+'</span></div>';
       }).join("") + '</div>';
     }
-    if (o.courier){
-      h += '<div class="trk-live">📡 <b>Live courier update</b> (Delhivery):<br>'
-        + esc(o.courier.status||"") + (o.courier.location ? ' — '+esc(o.courier.location) : '')
-        + (o.courier.time ? '<br><small>'+esc(String(o.courier.time).replace("T"," ").slice(0,16))+'</small>' : '')
-        + (o.courier.expected ? '<br>Expected delivery: <b>'+esc(String(o.courier.expected).slice(0,10))+'</b>' : '')
-        + '</div>';
-    }
     if (o.tracking_number){
-      h += '<div class="trk-awb">AWB: <b>'+esc(o.tracking_number)+'</b>'+(o.carrier?(' · '+esc(o.carrier)):'')
-        + ' · <a href="https://www.delhivery.com/track-v2/package/'+encodeURIComponent(o.tracking_number)+'" target="_blank" rel="noopener">Courier par live dekho ↗</a></div>';
+      h += '<div style="margin-top:16px;padding:16px;background:#fff9ee;border:1.5px dashed #c6a87d;border-radius:12px;text-align:center">'
+        + '<div style="font-size:11px;font-weight:700;letter-spacing:1.2px;color:#8a7565;text-transform:uppercase;margin-bottom:6px">DELHIVERY WAYBILL / TRACKING ID</div>'
+        + '<div style="font-size:18px;font-weight:800;color:#2c1a14;margin-bottom:12px;word-break:break-all">'+esc(o.tracking_number)+' '+(o.carrier?('('+esc(o.carrier)+')'):'')+'</div>'
+        + '<a href="https://www.delhivery.com/track/package/'+encodeURIComponent(o.tracking_number)+'" target="_blank" rel="noopener" style="display:inline-block;background:#2c1a14;color:#f0d9a8;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13.5px;box-shadow:0 3px 10px rgba(44,26,20,0.2)">🚚 Track Live on Delhivery App/Website ↗</a>'
+        + '</div>';
     } else if (o.status !== "cancelled" && o.status !== "delivered"){
-      h += '<div class="trk-awb">Courier AWB will be added soon — live courier tracking will appear here once shipped.</div>';
+      h += '<div class="trk-awb">Courier tracking ID will be assigned shortly via Delhivery — check back soon or track via your email link.</div>';
+    }
+    if (o.courier){
+      h += '<div class="trk-live" style="margin-top:12px;padding:14px;background:#fdfbf7;border:1px solid #eae0d0;border-radius:10px">📡 <b>Live Courier Update</b> (Delhivery):<br>'
+        + '<div style="font-size:14px;font-weight:700;color:#2c1a14;margin-top:4px">'+esc(o.courier.status||"")+'</div>'
+        + (o.courier.location ? '<div style="color:#6a584a;font-size:13px">📍 '+esc(o.courier.location)+'</div>' : '')
+        + (o.courier.time ? '<div style="color:#8a7565;font-size:12px">🕒 '+esc(String(o.courier.time).replace("T"," ").slice(0,16))+'</div>' : '')
+        + (o.courier.expected ? '<div style="margin-top:6px;font-size:13px;color:#1e7d46">📦 Expected Delivery: <b>'+esc(String(o.courier.expected).slice(0,10))+'</b></div>' : '')
+        + '</div>';
     }
     h += '</div>';
     return h;
@@ -3441,7 +3446,7 @@
           ).join("") + '</div>'
         + '<div class="ad-sec"><h4>📞 Contact & Brand</h4>' + txt("Brand word 1","brand1") + txt("Brand word 2 (golden)","brand2") + txt("Brand sub-line","sub") + txt("Top strip text","strip") + txt("Phone (display)","phone") + txt("WhatsApp number (digits only, 91…)","wa") + txt("Instagram username","insta") + txt("Footer paragraph","footBlurb",true) + '</div>'
         + '<div class="ad-sec"><h4>💳 Payment — UPI &amp; Cash only</h4>' + txt("UPI ID (QR will be generated from this)","upiId") + txt("Payee name (shown on UPI)","payeeName") + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.6">Cards are <b>off</b> — only <b>UPI</b> and <b>Cash on Delivery</b>. Customer pays via QR / "Pay in UPI app" and enters the <b>UTR number</b>, then the order is confirmed (UTR comes via WhatsApp).</div></div>'
-        + '<div class="ad-sec"><h4>🚚 Orders &amp; Delivery</h4><div class="ad-row2"><div>' + txt("Minimum order ₹","minOrder") + '</div><div>' + txt("Shipping fee ₹","shippingFee") + '</div></div>' + txt("Free delivery above ₹ (0 = always charge)","freeShipAbove") + txt("GST / price note (shown in cart)","gstNote") + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.6">New model: orders <b>₹1000+</b> get <b>FREE</b> shipping (UPI or COD). Below that, small 1–2 item orders also work — customer\'s <b>pincode</b> at checkout gets the exact rate from your <b>Delhivery API</b> (if API is not set, the flat fee above is used as fallback). Minimum order is now <b>0</b> — you can increase it here if needed.</div></div>';
+        + '<div class="ad-sec"><h4>🚚 Orders &amp; Delivery</h4><div class="ad-row2"><div>' + txt("Minimum order ₹","minOrder") + '</div><div>' + txt("Shipping fee ₹","shippingFee") + '</div></div>' + txt("Free delivery above ₹ (0 = always charge)","freeShipAbove") + txt("Delhivery Warehouse Name (exact registered name from your Delhivery One portal, e.g. Tish Creations or Roorkee)","delhiveryWarehouse") + txt("GST / price note (shown in cart)","gstNote") + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.6">New model: orders <b>₹1000+</b> get <b>FREE</b> shipping (UPI or COD). Below that, small 1–2 item orders also work — customer\'s <b>pincode</b> at checkout gets the exact rate from your <b>Delhivery API</b> (if API is not set, the flat fee above is used as fallback). Minimum order is now <b>0</b> — you can increase it here if needed.</div></div>';
     }
   }
 
@@ -3466,15 +3471,25 @@
           const dt = o.created_at ? new Date(o.created_at).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}) : "";
           const pay = (o.payment_mode||"—").toUpperCase() + " · " + (o.payment_status||"pending");
           const opts = ORDER_STAGES.map(s=>'<option value="'+s+'"'+(s===o.status?" selected":"")+'>'+STAGE_LABEL[s]+'</option>').join("");
+          let addrText = "";
+          if (typeof o.shipping_address === "string" && !o.shipping_address.trim().startsWith("{") && !o.shipping_address.includes("[object")) {
+            addrText = o.shipping_address;
+          } else {
+            let aObj = o.shipping_address || {};
+            if (typeof aObj === "string") { try { aObj = JSON.parse(aObj); } catch(e){ aObj = { line1: aObj }; } }
+            addrText = [aObj.line1 || aObj.addr1 || aObj.add || aObj.address, aObj.line2 || aObj.addr2, aObj.city, aObj.state].filter(x => x && !String(x).includes("[object")).join(", ");
+          }
           return '<div class="ad-order" data-oid="'+esc(o.id)+'">'
             + '<div class="ad-order-top"><div><b>#'+esc(String(o.id).slice(0,12))+'</b><span class="ad-order-dt">'+dt+'</span></div><span class="ad-order-total">'+inr(Number(o.total)||0)+'</span></div>'
             + '<div class="ad-order-cust">👤 '+esc(o.customer_name||"—")+' · 📱 '+esc(o.customer_phone||"—")+(o.customer_email?' · ✉️ '+esc(o.customer_email):'')+'</div>'
-            + (o.shipping_address?'<div class="ad-order-addr">📍 '+esc(o.shipping_address)+(o.shipping_pincode?' — '+esc(o.shipping_pincode):'')+'</div>':'')
+            + (addrText ? '<div class="ad-order-addr">📍 '+esc(addrText)+(o.shipping_pincode?' — '+esc(o.shipping_pincode):'')+'</div>' : '')
             + '<div class="ad-order-pay">💳 '+esc(pay)+(o.coupon_code?' · 🏷 '+esc(o.coupon_code):'')+'</div>'
             + '<div class="ad-order-ctrl"><label>Status</label><select data-ofield="status">'+opts+'</select>'
             + '<input data-ofield="trackingNumber" placeholder="Tracking no." value="'+esc(o.tracking_number||"")+'">'
             + '<input data-ofield="carrier" placeholder="Carrier" value="'+esc(o.carrier||"")+'">'
-            + '<button class="ad-btn ad-order-save" data-osave>Update</button></div>'
+            + '<button class="ad-btn ad-order-save" data-osave>Update</button>'
+            + (["confirmed","packed","shipped","out_for_delivery","delivered"].includes(o.status) ? '<button class="ad-btn ghost" data-resend-receipt="'+esc(o.id)+'" style="margin-left:4px;font-size:12px;padding:6px 10px">📧 Resend Receipt</button>' : '')
+            + '</div>'
             + '</div>';
         }).join("");
     } catch(e){ body.innerHTML = '<div class="ad-empty">⚠️ Could not load orders — please make sure you are logged in as owner and the server is reachable.</div>'; }
@@ -3598,11 +3613,29 @@
       tt[t.dataset.tf] = t.value; renderTests();
     }
   });
-  $("#adBody").addEventListener("change", e=>{ $("#adBody").dispatchEvent(new Event("noop")); e.target.dispatchEvent(new Event("input",{bubbles:true})); });
+  $("#adBody").addEventListener("change", async e=>{
+    $("#adBody").dispatchEvent(new Event("noop")); e.target.dispatchEvent(new Event("input",{bubbles:true}));
+    if (e.target.dataset.sk) {
+      try { await fetch(TC_CONFIG.backendUrl + "/api/site-settings", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify({ [e.target.dataset.sk]: e.target.value }) }); } catch(err){}
+    }
+  });
 
-  $("#adBody").addEventListener("click", e=>{
+  $("#adBody").addEventListener("click", async e=>{
     const osave = e.target.closest("[data-osave]");
     if (osave){ const card = osave.closest("[data-oid]"); if (card) saveOrderRow(card); return; }
+    const resend = e.target.closest("[data-resend-receipt]");
+    if (resend){
+      const oid = resend.dataset.resendReceipt;
+      resend.disabled = true; resend.textContent = "Sending…";
+      try {
+        const r = await fetch(TC_CONFIG.backendUrl + "/api/admin/orders/" + encodeURIComponent(oid) + "/send-confirmed-receipt", { method: "POST", credentials: "include" });
+        const d = await r.json().catch(()=>({}));
+        if (d.ok) toast("📧 Confirmed receipt email sent to customer!");
+        else toast("⚠️ Could not send email: " + (d.error || "Check mail settings"));
+      } catch(err){ toast("Network error"); }
+      resend.textContent = "📧 Resend Receipt"; resend.disabled = false;
+      return;
+    }
     const up = e.target.closest("[data-act='upimg']");
     if (up){
       const card = up.closest("[data-pid]");

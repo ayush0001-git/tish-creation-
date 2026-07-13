@@ -290,6 +290,243 @@ async function sendOrderConfirmationEmail(order, customerEmail) {
   }
 }
 
+async function sendOrderConfirmedReceiptEmail(order, waybillOrTracking, extraNote) {
+  const mailer = getMailer();
+  if (!mailer || !order?.customer_email) return false;
+
+  const firstName = escapeHtml(String(order.customer_name || 'Customer').split(' ')[0] || 'there');
+  const orderDate = new Date(order.created_at || Date.now()).toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'long', year: 'numeric'
+  });
+  const paymentLabel = order.payment_mode === 'cod' ? 'Cash on Delivery' : 'Prepaid (UPI / Razorpay)';
+  const trackingNum = waybillOrTracking || order.tracking_number || null;
+  const origin = STOREFRONT_URL || 'https://www.tishcreations.in';
+
+  let trackingText = trackingNum ? `DTDC/DELHIVERY — ${escapeHtml(trackingNum)}` : 'Assigned shortly via Delhivery';
+  let trackingBtnHtml = trackingNum
+    ? `<a href="https://www.delhivery.com/track/package/${encodeURIComponent(trackingNum)}" target="_blank" rel="noopener" style="display:inline-block;margin:6px 6px;background:#D4AF37;color:#2C1A14;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13.5px;box-shadow:0 3px 10px rgba(212,175,55,0.3);">🚚 Track on Delhivery App/Website</a>`
+    : '';
+
+  let items = Array.isArray(order.items) ? order.items : [];
+  if (items.length === 0 && pool) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT p.title AS name, oi.qty, oi.price FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id=$1`,
+        [order.id]
+      );
+      if (rows.length) items = rows;
+    } catch(e){}
+  }
+
+  let itemsRowsHtml = items.map(it => {
+    const name = escapeHtml(it.name || it.title || 'Handcrafted Creation');
+    const spec = escapeHtml(it.spec || it.size || 'Handmade with love');
+    const qty = Number(it.qty) || 1;
+    const amount = (Number(it.price) || 0) * qty;
+    return `<tr style="border-bottom:1px solid #F0E8DC;">
+      <td style="padding:14px 0;">
+        <div style="font-weight:700;color:#2C1A14;font-size:14.5px;">${name}</div>
+        <div style="font-size:12px;color:#8A7565;margin-top:2px;">${spec}</div>
+      </td>
+      <td style="padding:14px 12px;text-align:center;color:#6A584A;font-weight:600;">× ${qty}</td>
+      <td style="padding:14px 0;text-align:right;font-weight:700;color:#2C1A14;font-size:14.5px;">₹${amount.toLocaleString('en-IN')}</td>
+    </tr>`;
+  }).join('');
+
+  if (!itemsRowsHtml) {
+    itemsRowsHtml = `<tr><td colspan="3" style="padding:16px 0;color:#6A584A;text-align:center;">Handcrafted Gifting Order (${items.length || 1} item)</td></tr>`;
+  }
+
+  let addr = {};
+  if (typeof order.shipping_address === 'string') {
+    try { addr = JSON.parse(order.shipping_address); } catch(e){}
+  } else if (order.shipping_address && typeof order.shipping_address === 'object') {
+    addr = order.shipping_address;
+  }
+  const addressText = [addr.line1 || addr.addr1 || addr.add, addr.line2 || addr.addr2, addr.city, addr.state].filter(x => x && !String(x).includes('[object')).join(', ')
+    + (addr.pincode || order.shipping_pincode ? ` — ${addr.pincode || order.shipping_pincode}` : '');
+
+  const itemsCount = items.reduce((acc, it) => acc + (Number(it.qty) || 1), 0) || 1;
+  const waNum = typeof SETTINGS_WA !== 'undefined' ? SETTINGS_WA : '98372 29280';
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background:#F6F2EA;font-family:'Outfit','Segoe UI',Tahoma,Geneva,Verdana,sans-serif;color:#2C1A14;-webkit-font-smoothing:antialiased;">
+  <div style="max-width:620px;margin:24px auto;background:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(44,26,20,0.12);border:1px solid #EAE0D0;">
+    
+    <!-- Header Box -->
+    <div style="background:#2C1A14;padding:36px 24px 32px;text-align:center;color:#FFFFFF;border-bottom:3px solid #D4AF37;">
+      <table style="margin:0 auto;border-collapse:collapse;">
+        <tr>
+          <td style="padding-right:14px;vertical-align:middle;">
+            <div style="width:48px;height:48px;border-radius:50%;background:#D4AF37;color:#2C1A14;font-size:18px;font-weight:800;line-height:48px;text-align:center;margin:0 auto;">TC</div>
+          </td>
+          <td style="text-align:left;vertical-align:middle;">
+            <div style="font-size:28px;font-weight:700;letter-spacing:0.5px;color:#FFFFFF;font-family:Georgia,serif;">Tish Creations</div>
+            <div style="font-size:11px;letter-spacing:2.5px;color:#D4AF37;font-weight:600;margin-top:2px;">HANDCRAFTED WITH LOVE</div>
+          </td>
+        </tr>
+      </table>
+      
+      <!-- Order Confirmed Pill -->
+      <div style="margin-top:24px;">
+        <span style="display:inline-block;background:rgba(212,175,55,0.22);border:1px solid #D4AF37;color:#F0D9A8;padding:6px 22px;border-radius:50px;font-size:13.5px;font-weight:700;letter-spacing:0.5px;">✓ Order Confirmed</span>
+      </div>
+    </div>
+
+    <!-- Greeting Section -->
+    <div style="padding:32px 32px 24px;text-align:center;border-bottom:1px solid #F0E8DC;">
+      <h1 style="margin:0 0 10px;font-size:24px;font-weight:700;color:#2C1A14;">Thank you for your order, ${firstName}!</h1>
+      <p style="margin:0 auto;max-width:480px;font-size:14.5px;line-height:1.65;color:#6A584A;">Your order has been confirmed by our team and is being carefully prepared for dispatch. We've initiated delivery with our courier partners — click below to track live updates anytime.</p>
+    </div>
+
+    <!-- Order Metadata Grid -->
+    <div style="padding:24px 32px;background:#FDFBF7;border-bottom:1px solid #F0E8DC;">
+      <table style="width:100%;border-collapse:collapse;">
+        <tr>
+          <td style="width:50%;padding:8px 12px 14px 0;border-bottom:1px solid #EAE0D0;">
+            <div style="font-size:10.5px;font-weight:700;letter-spacing:1.2px;color:#8A7565;text-transform:uppercase;margin-bottom:4px;">ORDER NUMBER</div>
+            <div style="font-size:15px;font-weight:700;color:#2C1A14;">#${escapeHtml(order.id)}</div>
+          </td>
+          <td style="width:50%;padding:8px 0 14px 12px;border-bottom:1px solid #EAE0D0;">
+            <div style="font-size:10.5px;font-weight:700;letter-spacing:1.2px;color:#8A7565;text-transform:uppercase;margin-bottom:4px;">ORDER DATE</div>
+            <div style="font-size:15px;font-weight:700;color:#2C1A14;">${escapeHtml(orderDate)}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="width:50%;padding:14px 12px 8px 0;">
+            <div style="font-size:10.5px;font-weight:700;letter-spacing:1.2px;color:#8A7565;text-transform:uppercase;margin-bottom:4px;">PAYMENT METHOD</div>
+            <div style="font-size:15px;font-weight:700;color:#2C1A14;">${escapeHtml(paymentLabel)}</div>
+          </td>
+          <td style="width:50%;padding:14px 0 8px 12px;">
+            <div style="font-size:10.5px;font-weight:700;letter-spacing:1.2px;color:#8A7565;text-transform:uppercase;margin-bottom:4px;">ESTIMATED DELIVERY</div>
+            <div style="font-size:15px;font-weight:700;color:#2C1A14;">10–12 days</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Tracking Box -->
+    <div style="padding:28px 32px;border-bottom:1px solid #F0E8DC;background:#FFFFFF;">
+      <div style="background:#FDFBF7;border:1.5px dashed #C6A87D;border-radius:12px;padding:22px 18px;text-align:center;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;color:#8A7565;text-transform:uppercase;margin-bottom:6px;">TRACKING ID / COURIER</div>
+        <div style="font-size:18px;font-weight:800;color:#2C1A14;margin-bottom:16px;word-break:break-all;">${trackingText}</div>
+        <div>
+          ${trackingBtnHtml}
+          <a href="${escapeHtml(origin)}#account" style="display:inline-block;margin:6px 6px;background:#2C1A14;color:#FFFFFF;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13.5px;box-shadow:0 3px 10px rgba(44,26,20,0.2);">📦 View My Order &amp; Live Tracking</a>
+        </div>
+        <div style="font-size:12px;color:#8A7565;margin-top:12px;">Click above to track right from your account on our website or directly on the courier app.</div>
+      </div>
+    </div>
+
+    <!-- Items Ordered Section -->
+    <div style="padding:28px 32px;background:#FFFFFF;border-bottom:1px solid #F0E8DC;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.8px;color:#8A7565;text-transform:uppercase;margin-bottom:16px;">ITEMS ORDERED</div>
+      <table style="width:100%;border-collapse:collapse;">
+        ${itemsRowsHtml}
+      </table>
+    </div>
+
+    <!-- Totals Section -->
+    <div style="padding:24px 32px;background:#FDFBF7;border-bottom:1px solid #F0E8DC;">
+      <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:2.2;">
+        <tr>
+          <td style="color:#6A584A;">Subtotal (${itemsCount} item${itemsCount > 1 ? 's' : ''})</td>
+          <td style="text-align:right;font-weight:600;color:#2C1A14;">₹${Number(order.subtotal || 0).toLocaleString('en-IN')}</td>
+        </tr>
+        <tr>
+          <td style="color:#6A584A;">Shipping &amp; handling</td>
+          <td style="text-align:right;font-weight:600;color:#2C1A14;">₹${Number(order.shipping_fee || 0).toLocaleString('en-IN')}</td>
+        </tr>
+        ${order.discount ? `
+        <tr>
+          <td style="color:#1E7D46;">Coupon discount ${order.coupon_code ? `(${escapeHtml(order.coupon_code)})` : ''}</td>
+          <td style="text-align:right;font-weight:700;color:#1E7D46;">- ₹${Number(order.discount).toLocaleString('en-IN')}</td>
+        </tr>` : ''}
+        <tr style="border-top:1px solid #EAE0D0;">
+          <td style="padding-top:12px;font-size:16px;font-weight:800;color:#2C1A14;">Total paid</td>
+          <td style="padding-top:12px;text-align:right;font-size:18px;font-weight:800;color:#2C1A14;">₹${Number(order.total || 0).toLocaleString('en-IN')}</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Delivery & Billing Grid -->
+    <div style="padding:28px 32px;background:#FFFFFF;border-bottom:1px solid #F0E8DC;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.8px;color:#8A7565;text-transform:uppercase;margin-bottom:16px;">DELIVERY &amp; BILLING</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.6;">
+        <tr>
+          <td style="width:50%;vertical-align:top;padding-right:16px;">
+            <div style="font-size:11px;font-weight:700;color:#8A7565;margin-bottom:6px;">SHIP TO</div>
+            <div style="font-weight:700;color:#2C1A14;margin-bottom:4px;">${escapeHtml(order.customer_name || 'Customer')}</div>
+            <div style="color:#6A584A;">${escapeHtml(addressText)}</div>
+            ${order.customer_phone ? `<div style="color:#6A584A;margin-top:4px;">📱 +91 ${escapeHtml(order.customer_phone)}</div>` : ''}
+          </td>
+          <td style="width:50%;vertical-align:top;padding-left:16px;border-left:1px solid #F0E8DC;">
+            <div style="font-size:11px;font-weight:700;color:#8A7565;margin-bottom:6px;">BILL TO</div>
+            <div style="font-weight:700;color:#2C1A14;margin-bottom:4px;">${escapeHtml(order.customer_name || 'Customer')}</div>
+            <div style="color:#6A584A;margin-bottom:8px;">Same as shipping address</div>
+            <div style="font-size:12px;background:#FDFBF7;border:1px solid #EAE0D0;border-radius:6px;padding:6px 10px;color:#6A584A;">
+              Payment confirmed via<br><strong style="color:#2C1A14;">${escapeHtml(paymentLabel)}</strong>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Support Cards Footer -->
+    <div style="padding:24px 32px;background:#FDFBF7;border-bottom:1px solid #EAE0D0;">
+      <table style="width:100%;border-collapse:collapse;text-align:center;font-size:12px;">
+        <tr>
+          <td style="width:33.3%;padding:10px;background:#FFFFFF;border:1px solid #EAE0D0;border-radius:8px;">
+            <div style="font-weight:700;color:#2C1A14;">Need help?</div>
+            <div style="color:#8A7565;margin-top:2px;">hello@tishcreations.in</div>
+          </td>
+          <td style="width:4px;"></td>
+          <td style="width:33.3%;padding:10px;background:#FFFFFF;border:1px solid #EAE0D0;border-radius:8px;">
+            <div style="font-weight:700;color:#2C1A14;">Returns &amp; exchanges</div>
+            <div style="color:#8A7565;margin-top:2px;">Within 7 days of delivery</div>
+          </td>
+          <td style="width:4px;"></td>
+          <td style="width:33.3%;padding:10px;background:#FFFFFF;border:1px solid #EAE0D0;border-radius:8px;">
+            <div style="font-weight:700;color:#2C1A14;">Call / WhatsApp us</div>
+            <div style="color:#8A7565;margin-top:2px;">+91 ${escapeHtml(waNum)}</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Bottom Dark Strip -->
+    <div style="background:#2C1A14;padding:24px 32px;text-align:center;color:#C6A87D;font-size:12px;">
+      <div style="margin-bottom:8px;font-weight:600;color:#FFFFFF;">Tish Creations · Handcrafted with love in India 🌸</div>
+      <div>© 2026 Tish Creations · All rights reserved</div>
+    </div>
+
+  </div>
+</body>
+</html>`;
+
+  const text = `Tish Creations — Order Confirmed!\n\nHi ${firstName},\n\nYour order #${order.id} has been confirmed and is preparing for dispatch!\n\nTracking Number: ${trackingNum || 'Will be assigned shortly via Delhivery'}\nTrack live on Delhivery: ${trackingNum ? 'https://www.delhivery.com/track/package/' + trackingNum : 'Check your account on ' + origin}\n\nTotal Paid: ₹${Number(order.total || 0).toLocaleString('en-IN')}\n\nThank you for shopping with Tish Creations 💖`;
+
+  try {
+    await mailer.sendMail({
+      from: MAIL_FROM,
+      to: order.customer_email,
+      subject: `🌸 Order Confirmed #${order.id} · Tish Creations`,
+      text,
+      html,
+    });
+    console.log(`📧 Premium Order Confirmed receipt email sent to ${order.customer_email} for order #${order.id}`);
+    return true;
+  } catch (e) {
+    console.error('sendOrderConfirmedReceiptEmail failed:', e.message);
+    return false;
+  }
+}
+
 const SETTINGS_WA = '98372 29280'; // for the email footer; the real settings live in the storefront
 
 /* Send a WhatsApp message to the customer.
@@ -1374,11 +1611,20 @@ async function markOrderPaid(razorpayOrderId, razorpayPaymentId, amountPaise) {
 }
 
 async function autoBookDelhiveryIfConfirmed(orderId) {
-  if (!DELHIVERY_TOKEN) return { waybill: null, note: 'Delhivery token not configured' };
+  if (!DELHIVERY_TOKEN) {
+    try {
+      const current = await getOrderById(orderId);
+      if (current) sendOrderConfirmedReceiptEmail(current, current.tracking_number || null, 'Confirmed').catch(e => console.error('confirmed receipt email bg:', e.message));
+    } catch(e){}
+    return { waybill: null, note: 'Delhivery token not configured' };
+  }
   try {
     const current = await getOrderById(orderId);
     if (!current) return { waybill: null, note: 'Order not found' };
-    if (current.tracking_number) return { waybill: current.tracking_number, note: `Already tracked: ${current.tracking_number}` };
+    if (current.tracking_number) {
+      sendOrderConfirmedReceiptEmail(current, current.tracking_number, `Already tracked: ${current.tracking_number}`).catch(e => console.error('confirmed receipt email bg:', e.message));
+      return { waybill: current.tracking_number, note: `Already tracked: ${current.tracking_number}` };
+    }
 
     const allProds = await getProducts();
     let totalWeightGrams = 0;
@@ -1437,35 +1683,80 @@ async function autoBookDelhiveryIfConfirmed(orderId) {
         shipment_height: '5',
         shipment_length: '10',
         weight: String(weightKg)
-      }],
-      pickup_location: {
-        name: process.env.DELHIVERY_PICKUP_LOCATION || 'Tish Creations'
-      }
+      }]
     };
+    let dbWarehouse = null;
+    if (pool) {
+      try {
+        const { rows } = await pool.query('SELECT data FROM site_settings WHERE id=1');
+        if (rows[0]?.data?.delhiveryWarehouse) dbWarehouse = rows[0].data.delhiveryWarehouse;
+      } catch(e){}
+    }
+    let pickupName = dbWarehouse || process.env.DELHIVERY_PICKUP_LOCATION || 'Tish Creations';
+    payload.pickup_location = { name: pickupName };
 
     if (!axios) throw new Error('axios not installed');
-    const formParams = new URLSearchParams();
-    formParams.append('format', 'json');
-    formParams.append('data', JSON.stringify(payload));
+    const sendCreate = async (locName) => {
+      payload.pickup_location = { name: locName };
+      const fp = new URLSearchParams();
+      fp.append('format', 'json');
+      fp.append('data', JSON.stringify(payload));
+      return await axios.post('https://track.delhivery.com/api/cmu/create.json', fp, {
+        headers: { Authorization: `Token ${DELHIVERY_TOKEN}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 12000
+      });
+    };
 
-    const delivRes = await axios.post('https://track.delhivery.com/api/cmu/create.json', formParams, {
-      headers: { Authorization: `Token ${DELHIVERY_TOKEN}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 12000
-    });
+    let delivRes = await sendCreate(pickupName);
+    const checkErr = delivRes.data?.rmk || delivRes.data?.packages?.[0]?.remarks?.join(', ') || JSON.stringify(delivRes.data || {});
+
+    // If ClientWarehouse matching query does not exist, auto-query registered warehouses:
+    if (!delivRes.data?.success && delivRes.data?.packages?.[0]?.status !== 'Success' && /clientwarehouse|pickup|warehouse/i.test(String(checkErr))) {
+      try {
+        console.log('Delhivery ClientWarehouse error detected. Auto-querying Delhivery for registered warehouse list...');
+        const wRes = await axios.get('https://track.delhivery.com/api/backend/clientwarehouse/create/', {
+          headers: { Authorization: `Token ${DELHIVERY_TOKEN}`, Accept: 'application/json' },
+          timeout: 8000
+        });
+        const wList = Array.isArray(wRes.data) ? wRes.data : (wRes.data?.data || wRes.data?.warehouses || []);
+        if (wList && wList.length > 0 && wList[0].name && wList[0].name !== pickupName) {
+          pickupName = wList[0].name;
+          console.log(`Auto-discovered registered Delhivery warehouse name: "${pickupName}". Retrying shipment creation...`);
+          if (pool) {
+            try {
+              await pool.query(
+                `INSERT INTO site_settings (id, data, updated_at) VALUES (1, $1::jsonb, now())
+                 ON CONFLICT (id) DO UPDATE SET data = site_settings.data || $1::jsonb, updated_at = now()`,
+                [JSON.stringify({ delhiveryWarehouse: pickupName })]
+              );
+            } catch(e){}
+          }
+          delivRes = await sendCreate(pickupName);
+        }
+      } catch (wErr) {
+        console.warn('Could not auto-fetch warehouse list from Delhivery API:', wErr?.message);
+      }
+    }
 
     if (delivRes.data && (delivRes.data.success || delivRes.data.packages?.[0]?.status === 'Success')) {
       const waybill = delivRes.data.packages?.[0]?.waybill || delivRes.data.waybill || null;
       if (waybill) {
-        await updateOrder(orderId, { trackingNumber: waybill, carrier: 'Delhivery' });
+        const updated = await updateOrder(orderId, { trackingNumber: waybill, carrier: 'Delhivery' });
+        sendOrderConfirmedReceiptEmail(updated || current, waybill, `Auto-booked on Delhivery! Waybill: ${waybill}`).catch(e => console.error('confirmed receipt email bg:', e.message));
         console.log(`Auto-booked Delhivery for #${orderId} -> Waybill: ${waybill}`);
         return { waybill, note: `Auto-booked on Delhivery! Waybill: ${waybill}` };
       }
     }
     const errReason = delivRes.data?.rmk || delivRes.data?.packages?.[0]?.remarks?.join(', ') || JSON.stringify(delivRes.data || {});
     console.warn(`Delhivery auto-booking note for #${orderId}:`, errReason);
+    sendOrderConfirmedReceiptEmail(current, current.tracking_number || null, `Delhivery note: ${errReason}`).catch(e => console.error('confirmed receipt email bg:', e.message));
     return { waybill: null, note: `Delhivery note: ${errReason}` };
   } catch (err) {
     console.error(`Delhivery auto-booking error for #${orderId}:`, err?.message || err);
+    try {
+      const current = await getOrderById(orderId);
+      if (current) sendOrderConfirmedReceiptEmail(current, current.tracking_number || null, `Delhivery error: ${err?.message || err}`).catch(e => console.error('confirmed receipt email bg:', e.message));
+    } catch(e){}
     return { waybill: null, note: `Delhivery error: ${err?.message || err}` };
   }
 }
@@ -1732,7 +2023,7 @@ app.post('/api/site-settings', requireAdmin, async (req, res) => {
     const patch = (req.body && typeof req.body === 'object') ? req.body : {};
     // Whitelist: only known image-ish keys, each a short string (URL).
     const clean = {};
-    for (const k of ['heroImg', 'bannerImg', 'cat0Img', 'cat1Img', 'cat2Img', 'cat3Img', 'cat4Img', 'cat5Img']) {
+    for (const k of ['heroImg', 'bannerImg', 'cat0Img', 'cat1Img', 'cat2Img', 'cat3Img', 'cat4Img', 'cat5Img', 'delhiveryWarehouse']) {
       if (typeof patch[k] === 'string' && patch[k].length <= 400) clean[k] = patch[k];
     }
     await pool.query(
@@ -2868,12 +3159,33 @@ app.get('/api/orders/track', async (req, res) => {
       const b = Buffer.from(token);
       if (a.length === b.length) guestOk = crypto.timingSafeEqual(a, b);
     }
-    if (!isOwner && !guestOk && !req.session?.isAdmin) return res.status(403).json({ error: 'Not allowed' });
+    let courierInfo = null;
+    if (o.tracking_number && DELHIVERY_TOKEN) {
+      try {
+        if (!axios) throw new Error('axios not installed');
+        const dr = await axios.get('https://track.delhivery.com/api/v1/packages/json/', {
+          params: { waybill: o.tracking_number, token: DELHIVERY_TOKEN },
+          timeout: 6000
+        });
+        const shipmentData = (dr.data?.ShipmentData || [])[0]?.Shipment || {};
+        if (shipmentData && shipmentData.Status) {
+          courierInfo = {
+            status: shipmentData.Status.Status || shipmentData.Status.StatusType || 'In Transit',
+            location: shipmentData.Status.StatusLocation || '',
+            time: shipmentData.Status.StatusDateTime || '',
+            expected: shipmentData.ExpectedDeliveryDate || ''
+          };
+        }
+      } catch(delivErr) {
+        console.warn('Could not fetch live Delhivery scan for tracking:', delivErr?.message);
+      }
+    }
     res.json({
       order: {
         id: o.id, status: o.status, payment_status: o.payment_status,
         payment_mode: o.payment_mode, total: o.total, created_at: o.created_at,
         tracking_number: o.tracking_number || null, carrier: o.carrier || null,
+        courier: courierInfo
       }
     });
   } catch (e) { console.error('track order:', e.message); res.status(500).json({ error: 'Could not load order' }); }
@@ -2940,6 +3252,18 @@ app.patch('/api/admin/orders/:id', requireAdmin, async (req, res) => {
     if (!o) return res.status(404).json({ error: 'Order not found' });
     res.json({ ok: true, order: o, delhiveryNote: delhiveryResult?.note || null });
   } catch (e) { console.error('update order:', e.message); res.status(500).json({ error: 'Could not update order' }); }
+});
+
+app.post('/api/admin/orders/:id/send-confirmed-receipt', requireAdmin, async (req, res) => {
+  try {
+    const o = await getOrderById(String(req.params.id).slice(0, 60));
+    if (!o) return res.status(404).json({ error: 'Order not found' });
+    const sent = await sendOrderConfirmedReceiptEmail(o, o.tracking_number || null, 'Manual admin resend');
+    res.json({ ok: sent });
+  } catch(e) {
+    console.error('send-confirmed-receipt:', e.message);
+    res.status(500).json({ error: 'Could not send receipt email' });
+  }
 });
 
 // ---- Coupons: validate (public), list/create/update (admin) ----
