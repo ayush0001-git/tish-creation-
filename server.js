@@ -157,7 +157,7 @@ const ALLOW_COD_ENABLED = String(ALLOW_COD).toLowerCase() === 'true';
 // Email OTP verification is enforced only when the server can actually deliver
 // the code (nodemailer installed + SMTP_URL set). Without SMTP it degrades to
 // auto-verified accounts so a missing mail config can never lock customers out.
-const EMAIL_VERIFICATION_ON = String(REQUIRE_EMAIL_VERIFICATION).toLowerCase() !== 'false' && !!SMTP_URL && !!nodemailer;
+const EMAIL_VERIFICATION_ON = String(REQUIRE_EMAIL_VERIFICATION).toLowerCase() !== 'false' && !!(process.env.RESEND_API_KEY);
 
 /* Normalize DATABASE_URL — only treat it as a real Postgres URL if it actually
    looks like one. Some hosting environments leak a non-postgres DATABASE_URL
@@ -198,27 +198,33 @@ if (isProd) {
 }
 
 /* ===========================================================================
-   EMAIL (Gmail SMTP via nodemailer) + WHATSAPP + UPI QR
+   EMAIL (Resend HTTP API) + WHATSAPP + UPI QR
 =========================================================================== */
-// Lazy-init the email transporter so the server still boots if SMTP_URL is
-// missing (e.g. dev mode). The first email we try to send will surface the
-// configuration error to stdout without crashing the request.
-let _mailer = null;
-function getMailer() {
-  if (_mailer) return _mailer;
-  if (!nodemailer || !SMTP_URL) return null;
+// Resend HTTP API — works on Railway (no SMTP ports needed).
+// Set RESEND_API_KEY in Railway Variables to enable emails.
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+
+const MAIL_FROM = 'Tish Creations <onboarding@resend.dev>';
+
+// Unified send function — replaces nodemailer.sendMail() everywhere.
+// Returns true on success, false on failure. Never throws.
+async function sendMail({ to, subject, html }) {
+  if (!RESEND_API_KEY) { console.warn('Email skipped: RESEND_API_KEY not set'); return false; }
   try {
-    _mailer = nodemailer.createTransport(SMTP_URL, { tls: { rejectUnauthorized: true } });
-    return _mailer;
-  } catch (e) {
-    console.error('SMTP init failed:', e.message);
-    return null;
-  }
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: MAIL_FROM, to, subject, html })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error('Resend error:', data); return false; }
+    return true;
+  } catch (e) { console.error('Resend fetch error:', e.message); return false; }
 }
 
-// Sender name + address used in the "From" header of all emails. Falls back
-// to whatever's in the SMTP_URL, which is fine for most providers.
-const MAIL_FROM = `"Tish Creations" <${(SMTP_URL.match(/\/\/([^:]+):/) || [])[1] || 'no-reply@tishcreations.in'}>`;
+// Legacy compat — mailer object used in older call sites
+const mailer = { sendMail: async (opts) => sendMail({ to: opts.to, subject: opts.subject, html: opts.html }) };
+function getMailer() { return RESEND_API_KEY ? mailer : null; }
 
 /* Send a professional order-confirmation HTML email to the customer. No-ops
    silently if SMTP isn't configured (so the order flow doesn't fail when
