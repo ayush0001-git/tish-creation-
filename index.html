@@ -2150,7 +2150,7 @@
       if (!form.city && a.city) form.city = a.city;
       if (!form.state && a.state) form.state = a.state;
       if (!form.pin && a.pincode) form.pin = a.pincode;
-      if ($("#checkoutModal").classList.contains("open")) renderCheckout();
+      const cm = $("#checkoutModal"); if (cm && cm.classList.contains("open")) renderCheckout();
     } catch(e){}
   }
 
@@ -2761,7 +2761,7 @@
     USER = u;
     try { u ? localStorage.setItem("tc_lux_user", JSON.stringify(u)) : localStorage.removeItem("tc_lux_user"); } catch(e){}
     refreshAcctBtn();
-    if ($("#acctModal").classList.contains("open")) renderAcct();
+    const am = $("#acctModal"); if (am && am.classList.contains("open")) renderAcct();
   }
 
   function refreshAcctBtn(){
@@ -2997,7 +2997,7 @@
           + '<div class="ord-items">'+ (names || (items.length+" item(s)")) +'</div>'
           + '<div class="ord-bot"><span class="ot">'+inr(Number(o.total)||0)+'</span>'
           + chip(esc(o.status||"pending"), STATUS_LABEL[o.status]||o.status) + payChip
-          + '<button class="ord-track" data-ac="trk-open" data-id="'+esc(o.id)+'">Track →</button></div>'
+          + '<button class="ord-track" data-ac="trk-open" data-id="'+esc(o.id)+'" style="padding:7px 14px;border-radius:8px;font-weight:600;">📋 Details & Track →</button></div>'
           + (o.tracking_number ? '<div style="margin-top:8px;padding:8px 10px;background:#fdfbf7;border:1px dashed #c6a87d;border-radius:8px;font-size:12.5px;display:flex;justify-content:space-between;align-items:center"><span>🚚 <b>Delhivery AWB:</b> '+esc(o.tracking_number)+'</span><a href="https://www.delhivery.com/track/package/'+encodeURIComponent(o.tracking_number)+'" target="_blank" rel="noopener" style="background:#2c1a14;color:#f0d9a8;padding:4px 10px;border-radius:6px;text-decoration:none;font-weight:700;font-size:11.5px">Track Live ↗</a></div>' : '')
           + actions
           + '</div>';
@@ -3063,6 +3063,22 @@
         + (o.courier.expected ? '<div style="margin-top:6px;font-size:13px;color:#1e7d46">📦 Expected Delivery: <b>'+esc(String(o.courier.expected).slice(0,10))+'</b></div>' : '')
         + '</div>';
     }
+    let addrText = "";
+    if (o.shipping_address) {
+      let aObj = o.shipping_address;
+      if (typeof aObj === "string") { try { aObj = JSON.parse(aObj); } catch(e){ aObj = { line1: aObj }; } }
+      addrText = [aObj.line1 || aObj.addr1 || aObj.add || aObj.address, aObj.line2 || aObj.addr2, aObj.city, aObj.state].filter(x => x && !String(x).includes("[object")).join(", ") + (o.shipping_pincode?' — '+o.shipping_pincode:'');
+    }
+    const itemsListHTML = Array.isArray(o.items) && o.items.length
+      ? '<ul style="margin:6px 0 0;padding-left:18px;line-height:1.6;">' + o.items.map(it => '<li><b>'+esc(it.qty||1)+'×</b> '+esc(it.name||it.id)+' <span style="color:#8a7565;font-size:12px;">('+inr(it.price||0)+')</span></li>').join('') + '</ul>'
+      : '<div style="margin-top:4px;color:#6a584a;">Total amount: '+inr(o.total)+'</div>';
+
+    h += '<div style="margin-top:16px;padding:14px;background:#fdfbf7;border:1px solid #eae0d0;border-radius:10px;font-size:13px;color:#2c1a14;text-align:left;">'
+      + '<div style="font-weight:700;color:#a87c4f;margin-bottom:6px;border-bottom:1px solid #eae0d0;padding-bottom:4px;">🛍 ORDER DETAILS & ITEMS</div>'
+      + itemsListHTML
+      + (addrText ? '<div style="margin-top:10px;border-top:1px solid #eae0d0;padding-top:8px;">📍 <b>Delivery Address:</b><br><span style="color:#6a584a;">'+esc(addrText)+'</span></div>' : '')
+      + '<div style="margin-top:8px;color:#6a584a;">💳 <b>Payment Method:</b> '+(o.payment_mode==="cod"?"Cash on Delivery":("Prepaid / Online"+(o.utr ? ' (Ref/UTR: '+esc(o.utr)+')' : '')))+'</div>'
+      + '</div>';
     h += '</div>';
     return h;
   }
@@ -3512,18 +3528,32 @@
             if (typeof aObj === "string") { try { aObj = JSON.parse(aObj); } catch(e){ aObj = { line1: aObj }; } }
             addrText = [aObj.line1 || aObj.addr1 || aObj.add || aObj.address, aObj.line2 || aObj.addr2, aObj.city, aObj.state].filter(x => x && !String(x).includes("[object")).join(", ");
           }
+          const itemsHTML = Array.isArray(o.items) && o.items.length
+            ? '<div style="margin:8px 0;padding:10px 12px;background:var(--cream);border-radius:10px;border:1px solid var(--border);font-size:13px;color:var(--ink);">'
+              + '<b style="color:var(--gold-dark);display:block;margin-bottom:6px;">🛍 Ordered Items to Pack:</b>'
+              + '<ul style="margin:0;padding-left:18px;line-height:1.6;">'
+              + o.items.map(it => '<li><b>'+esc(it.qty||1)+'×</b> '+esc(it.name||it.id)+' <span style="color:var(--muted);font-size:12px;">('+inr(it.price||0)+')</span></li>').join('')
+              + '</ul></div>'
+            : '<div style="margin:8px 0;padding:8px 12px;background:var(--cream);border-radius:8px;font-size:12.5px;color:var(--muted);">🛍 Ordered Items: (Total '+inr(o.total)+')</div>';
           return '<div class="ad-order" data-oid="'+esc(o.id)+'">'
             + '<div class="ad-order-top"><div><b>#'+esc(String(o.id).slice(0,12))+'</b><span class="ad-order-dt">'+dt+'</span></div><span class="ad-order-total">'+inr(Number(o.total)||0)+'</span></div>'
             + '<div class="ad-order-cust">👤 '+esc(o.customer_name||"—")+' · 📱 '+esc(o.customer_phone||"—")+(o.customer_email?' · ✉️ '+esc(o.customer_email):'')+'</div>'
             + (addrText ? '<div class="ad-order-addr">📍 '+esc(addrText)+(o.shipping_pincode?' — '+esc(o.shipping_pincode):'')+'</div>' : '')
-            + '<div class="ad-order-pay">💳 '+esc(pay)+(o.coupon_code?' · 🏷 '+esc(o.coupon_code):'')+'</div>'
-            + '<div class="ad-order-ctrl"><label>Status</label><select data-ofield="status">'+opts+'</select>'
-            + '<input data-ofield="trackingNumber" placeholder="Tracking no." value="'+esc(o.tracking_number||"")+'">'
-            + '<input data-ofield="carrier" placeholder="Carrier" value="'+esc(o.carrier||"")+'">'
-            + '<button class="ad-btn ad-order-save" data-osave>Update</button>'
-            + (["confirmed","packed","shipped","out_for_delivery","delivered"].includes(o.status) ? '<button class="ad-btn ghost" data-resend-receipt="'+esc(o.id)+'" style="margin-left:4px;font-size:12px;padding:6px 10px">📧 Resend Receipt</button>' : '')
-            + '<button class="ad-btn ghost" data-odelete="'+esc(o.id)+'" style="margin-left:4px;font-size:12px;padding:6px 10px;color:#D9534F;border-color:#D9534F;">🗑 Delete</button>'
-            + '</div>'
+            + '<div class="ad-order-pay">💳 '+esc(pay)+(o.coupon_code?' · 🏷 '+esc(o.coupon_code):'')+(o.utr ? ' · 📑 UTR/Ref: <b style="color:var(--gold-dark);">'+esc(o.utr)+'</b>' : '')+'</div>'
+            + itemsHTML
+            + '<div class="ad-order-ctrl" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;">'
+            + '<div><label style="font-size:11px;color:var(--muted);display:block;">Order Status</label><select data-ofield="status" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);">'+opts+'</select></div>'
+            + '<div><label style="font-size:11px;color:var(--muted);display:block;">Payment Status</label><select data-ofield="paymentStatus" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);">'
+            + '<option value="pending" '+(o.payment_status!=="paid"?'selected':'')+'>Pending</option>'
+            + '<option value="paid" '+(o.payment_status==="paid"?'selected':'')+'>Paid (Verified)</option>'
+            + '</select></div>'
+            + '<div><label style="font-size:11px;color:var(--muted);display:block;">Tracking / Waybill</label><input data-ofield="trackingNumber" placeholder="Tracking no." value="'+esc(o.tracking_number||"")+'" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);width:130px;"></div>'
+            + '<div><label style="font-size:11px;color:var(--muted);display:block;">Courier</label><input data-ofield="carrier" placeholder="Carrier" value="'+esc(o.carrier||"")+'" style="padding:5px 8px;border-radius:6px;border:1px solid var(--border);width:100px;"></div>'
+            + '<div style="display:flex;gap:6px;align-items:flex-end;margin-top:auto;">'
+            + '<button class="ad-btn ad-order-save" data-osave style="height:32px;">Update ✓</button>'
+            + '<button class="ad-btn ghost" data-resend-receipt="'+esc(o.id)+'" style="font-size:12px;padding:6px 10px;height:32px;" title="Send/Resend confirmation email to customer">📧 Send Receipt</button>'
+            + '<button class="ad-btn ghost" data-odelete="'+esc(o.id)+'" style="font-size:12px;padding:6px 10px;color:#D9534F;border-color:#D9534F;height:32px;">🗑 Delete</button>'
+            + '</div></div>'
             + '</div>';
         }).join("");
     } catch(e){ body.innerHTML = '<div class="ad-empty">⚠️ Could not load orders — please make sure you are logged in as owner and the server is reachable.</div>'; }
@@ -3969,7 +3999,7 @@
         return;
       }
       openCheckout();
-      if (!$("#checkoutModal").classList.contains("open")) openPanel($("#bagDrawer"));
+      const cm = $("#checkoutModal"); if (!cm || !cm.classList.contains("open")) openPanel($("#bagDrawer"));
     }
     else { toast("✨ " + PD.qty + " × added to bag"); refreshBagUI(); openPanel($("#bagDrawer")); }
   }

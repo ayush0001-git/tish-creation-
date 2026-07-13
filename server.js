@@ -1598,18 +1598,19 @@ async function getAllOrders() {
       GROUP BY o.id ORDER BY o.created_at DESC LIMIT 500`);
   return rows;
 }
-async function updateOrder(id, { status, trackingNumber, carrier }) {
+async function updateOrder(id, { status, trackingNumber, carrier, paymentStatus }) {
   if (!pool) {
     const o = mem.orders.find((x) => x.id === id); if (!o) return null;
     if (status) o.status = status;
     if (trackingNumber !== undefined) o.tracking_number = trackingNumber;
     if (carrier !== undefined) o.carrier = carrier;
+    if (paymentStatus !== undefined) o.payment_status = paymentStatus;
     o.status_updated_at = new Date().toISOString(); return o;
   }
   const { rows } = await pool.query(
     `UPDATE orders SET status=COALESCE($2,status), tracking_number=COALESCE($3,tracking_number),
-       carrier=COALESCE($4,carrier), status_updated_at=now() WHERE id=$1 RETURNING *`,
-    [id, status || null, trackingNumber ?? null, carrier ?? null]);
+       carrier=COALESCE($4,carrier), payment_status=COALESCE($5,payment_status), status_updated_at=now() WHERE id=$1 RETURNING *`,
+    [id, status || null, trackingNumber ?? null, carrier ?? null, paymentStatus || null]);
   return rows[0] || null;
 }
 async function deleteOrder(id) {
@@ -3277,7 +3278,7 @@ function isValidStatusTransition(from, to) {
   return fi !== -1 && ti !== -1 && ti > fi; // forward only (can skip stages)
 }
 app.patch('/api/admin/orders/:id', requireAdmin, async (req, res) => {
-  const { status, trackingNumber, carrier } = req.body || {};
+  const { status, trackingNumber, carrier, paymentStatus, payment_status } = req.body || {};
   if (status && !ORDER_STAGES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
   const orderId = String(req.params.id).slice(0, 60);
   try {
@@ -3287,16 +3288,21 @@ app.patch('/api/admin/orders/:id', requireAdmin, async (req, res) => {
       if (!isValidStatusTransition(current.status, status))
         return res.status(400).json({ error: `Can't move an order from "${current.status}" to "${status}".` });
     }
-    let delhiveryResult = null;
-    if (status === 'confirmed') {
-      delhiveryResult = await autoBookDelhiveryIfConfirmed(orderId);
-    }
-    const o = await updateOrder(orderId, {
+    const pStat = paymentStatus || payment_status;
+    let o = await updateOrder(orderId, {
       status,
       trackingNumber: trackingNumber !== undefined ? String(trackingNumber).slice(0, 60) : undefined,
       carrier: carrier !== undefined ? String(carrier).slice(0, 40) : undefined,
+      paymentStatus: pStat !== undefined ? String(pStat).slice(0, 20) : undefined,
     });
     if (!o) return res.status(404).json({ error: 'Order not found' });
+    let delhiveryResult = null;
+    if (status === 'confirmed') {
+      delhiveryResult = await autoBookDelhiveryIfConfirmed(orderId);
+      if (delhiveryResult?.waybill) {
+        o = await getOrderById(orderId) || o;
+      }
+    }
     res.json({ ok: true, order: o, delhiveryNote: delhiveryResult?.note || null });
   } catch (e) { console.error('update order:', e.message); res.status(500).json({ error: 'Could not update order' }); }
 });
