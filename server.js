@@ -1612,6 +1612,22 @@ async function updateOrder(id, { status, trackingNumber, carrier }) {
     [id, status || null, trackingNumber ?? null, carrier ?? null]);
   return rows[0] || null;
 }
+async function deleteOrder(id) {
+  if (!pool) {
+    const idx = mem.orders.findIndex((x) => x.id === id);
+    if (idx !== -1) { mem.orders.splice(idx, 1); return true; }
+    return false;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM order_items WHERE order_id = $1', [id]);
+    const { rowCount } = await client.query('DELETE FROM orders WHERE id = $1', [id]);
+    await client.query('COMMIT');
+    return rowCount > 0;
+  } catch (e) { await client.query('ROLLBACK'); throw e; }
+  finally { client.release(); }
+}
 async function markOrderPaid(razorpayOrderId, razorpayPaymentId, amountPaise) {
   if (!pool) return true;
   // If we know the captured amount, only mark paid when it matches the stored
@@ -3283,6 +3299,18 @@ app.patch('/api/admin/orders/:id', requireAdmin, async (req, res) => {
     if (!o) return res.status(404).json({ error: 'Order not found' });
     res.json({ ok: true, order: o, delhiveryNote: delhiveryResult?.note || null });
   } catch (e) { console.error('update order:', e.message); res.status(500).json({ error: 'Could not update order' }); }
+});
+
+app.delete('/api/admin/orders/:id', requireAdmin, async (req, res) => {
+  const orderId = String(req.params.id).slice(0, 60);
+  try {
+    const ok = await deleteOrder(orderId);
+    if (!ok) return res.status(404).json({ error: 'Order not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('delete order:', e.message);
+    res.status(500).json({ error: 'Could not delete order' });
+  }
 });
 
 app.post('/api/admin/orders/:id/send-confirmed-receipt', requireAdmin, async (req, res) => {

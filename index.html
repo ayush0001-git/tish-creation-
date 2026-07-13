@@ -2094,8 +2094,8 @@
     if (!meetsMin()){ toast("Minimum order " + inr(minOrder()) + " — add a little more"); return; }
     if (!USER) {
       ACCT.postLogin = "checkout";
-      if ($("#bagDrawer").classList.contains("open")) closePanel($("#bagDrawer"));
-      if ($("#pdModal").classList.contains("open")) closePanel($("#pdModal"));
+      const bd = $("#bagDrawer"); if (bd && bd.classList.contains("open")) closePanel(bd);
+      const pm = $("#prodModal"); if (pm && pm.classList.contains("open")) closePanel(pm);
       openAcct("login");
       toast("🔐 Please sign in to place your order — fast checkout & live tracking");
       return;
@@ -3522,6 +3522,7 @@
             + '<input data-ofield="carrier" placeholder="Carrier" value="'+esc(o.carrier||"")+'">'
             + '<button class="ad-btn ad-order-save" data-osave>Update</button>'
             + (["confirmed","packed","shipped","out_for_delivery","delivered"].includes(o.status) ? '<button class="ad-btn ghost" data-resend-receipt="'+esc(o.id)+'" style="margin-left:4px;font-size:12px;padding:6px 10px">📧 Resend Receipt</button>' : '')
+            + '<button class="ad-btn ghost" data-odelete="'+esc(o.id)+'" style="margin-left:4px;font-size:12px;padding:6px 10px;color:#D9534F;border-color:#D9534F;">🗑 Delete</button>'
             + '</div>'
             + '</div>';
         }).join("");
@@ -3672,6 +3673,26 @@
         else toast("⚠️ Could not send email: " + (d.error || "Check mail settings"));
       } catch(err){ toast("Network error"); }
       resend.textContent = "📧 Resend Receipt"; resend.disabled = false;
+      return;
+    }
+    const odelete = e.target.closest("[data-odelete]");
+    if (odelete){
+      const oid = odelete.dataset.odelete;
+      if (!confirm("Are you sure you want to permanently delete order #" + String(oid).slice(0,12) + "?")) return;
+      odelete.disabled = true; odelete.textContent = "Deleting…";
+      try {
+        const r = await fetch(TC_CONFIG.backendUrl + "/api/admin/orders/" + encodeURIComponent(oid), {
+          method: "DELETE", credentials: "include"
+        });
+        if (r.ok){
+          toast("🗑 Order deleted successfully");
+          const card = odelete.closest("[data-oid]");
+          if (card) card.remove();
+        } else {
+          toast("⚠️ Could not delete order");
+          odelete.textContent = "🗑 Delete"; odelete.disabled = false;
+        }
+      } catch(err){ toast("Network error"); odelete.textContent = "🗑 Delete"; odelete.disabled = false; }
       return;
     }
     const up = e.target.closest("[data-act='upimg']");
@@ -3942,7 +3963,7 @@
     if (goCheckout){
       if (!USER) {
         ACCT.postLogin = "checkout";
-        if ($("#pdModal").classList.contains("open")) closePanel($("#pdModal"));
+        const pm = $("#prodModal"); if (pm && pm.classList.contains("open")) closePanel(pm);
         openAcct("login");
         toast("🔐 Please sign in to place your order — fast checkout & live tracking");
         return;
