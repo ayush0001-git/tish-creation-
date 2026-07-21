@@ -1899,6 +1899,11 @@
           weightGrams: (db.weightGrams != null && Number.isFinite(Number(db.weightGrams))) ? Number(db.weightGrams) : (rp.weightGrams != null ? rp.weightGrams : 100),
           weight: (db.weight != null && Number.isFinite(Number(db.weight))) ? Number(db.weight) : (rp.weight != null ? rp.weight : 0.1),
           img: rp.img && String(rp.img).startsWith("data:") ? rp.img : (dbImg || rp.img || PLC),
+          // Gallery: server copy wins (it's what every visitor sees); fall back
+          // to the local rich copy so device-only (data:) photos still show for the owner.
+          images: (Array.isArray(db.images) && db.images.length)
+            ? db.images.filter(u => u && String(u).length <= 500)
+            : (Array.isArray(rp.images) ? rp.images : []),
           badge: rp.badge || "",
           feat: !!rp.feat,
           // Out-of-stock should SHOW with an "Out of Stock" badge (disabled add
@@ -2471,7 +2476,7 @@
       if (!/^[0-9A-Za-z]{8,30}$/.test(utr)){ toast("Please enter the UTR/Reference number after payment (8+ characters)"); const u=document.getElementById("coUTR"); u&&u.focus(); return; }
     }
     const btn = document.querySelector('#coFoot [data-co="confirm"]');
-    if (btn){ btn.disabled = true; btn.textContent = "Placing order…"; }
+    if (btn){ btn.disabled = true; btn.textContent = "⏳ Placing your order…"; btn.style.opacity = "0.75"; }
     const done = ()=>{ if (btn){ btn.disabled = false; } paintFoot(); };
 
     // Handle a server rejection (401/403/policy) with an honest message —
@@ -2513,10 +2518,16 @@
         if (CH.method === "phonepe"){ await startPhonePe(d.orderId, d.guestToken||""); done(); return; }
         if (CH.method === "upi" && utr){
           try {
-            await fetch(TC_CONFIG.backendUrl + "/api/orders/" + encodeURIComponent(d.orderId) + "/utr", {
+            const ur = await fetch(TC_CONFIG.backendUrl + "/api/orders/" + encodeURIComponent(d.orderId) + "/utr", {
               method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
               body: JSON.stringify({ utr: utr, token: d.guestToken || "" })
             });
+            if (!ur.ok){
+              const ud = await ur.json().catch(()=>({}));
+              // Order IS placed — only the UTR didn't save (e.g. duplicate/typo).
+              // Tell the customer so they can send it on WhatsApp instead.
+              setTimeout(()=>toast("⚠️ " + (ud.error || "Your UTR could not be saved — please send it to us on WhatsApp")), 1600);
+            }
           } catch(e){}
         }
         finishOrder(); return;
@@ -3796,12 +3807,12 @@
           }
         }
         renderGrids(); refreshWishUI();
-        // Save product once with the new main image (gallery stays local — server
-        // has no "extra images" field, and that's fine: gallery re-syncs when
-        // owner uses "Download index.html" + re-deploy).
+        // Save product once with the new main image + gallery so every visitor
+        // sees all the photos (server stores the gallery in products.gallery).
         try {
           await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
-            body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:p.img }) });
+            body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:p.img,
+              images: (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:")).slice(0,12) }) });
         } catch(e){}
       });
     }
@@ -3824,6 +3835,12 @@
       if (galleryEl && !galleryEl.children.length){
         galleryEl.innerHTML = '<div class="ad-extra-empty">No gallery photos yet — pick 1 or more photos above to add some.</div>';
       }
+      // Persist the removal so the photo doesn't come back on reload
+      try {
+        await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
+          body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:p.img,
+            images: (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:")).slice(0,12) }) });
+      } catch(e){}
       return;
     }
     const del = e.target.closest("[data-act='del']");
@@ -3936,6 +3953,7 @@
     for (const p of DATA.products){
       const body = { id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100 };
       if (p.img && !String(p.img).startsWith("data:") && String(p.img).length<=500) body.image = p.img; else if (p.img) skippedImg++;
+      body.images = (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:") && String(u).length<=500).slice(0,12);
       try {
         const r = await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify(body) });
         if (r.ok) ok++;

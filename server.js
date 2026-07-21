@@ -888,6 +888,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_email ON customers (lower(email)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_google_sub ON customers (google_sub) WHERE google_sub IS NOT NULL;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS weight_grams INTEGER NOT NULL DEFAULT 100;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_qty INTEGER;
+-- Extra product photos (the gallery). Main photo stays in image_url; this holds
+-- the rest as a JSON array of short /api/img/... URLs.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS gallery JSONB;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ DEFAULT now();
@@ -1043,7 +1046,7 @@ async function getProducts() {
   }
   const { rows } = await pool.query(
     `SELECT id, title AS name, category, base_price AS price, original_price AS "originalPrice",
-            image_url AS image, in_stock AS "inStock", description,
+            image_url AS image, COALESCE(gallery, '[]'::jsonb) AS images, in_stock AS "inStock", description,
             weight_grams AS "weightGrams", COALESCE(weight_grams, 100)::numeric / 1000.0 AS weight,
             stock_qty AS "stock"
        FROM products ORDER BY created_at DESC`
@@ -2031,12 +2034,18 @@ app.post('/api/products', requireAdmin, async (req, res) => {
     if (!id) id = 'p_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
     const weightGrams = Math.max(10, Math.min(50000, Math.round(Number(b.weightGrams ?? (b.weight != null ? b.weight * 1000 : 100)) || 100)));
     const stockQty = (b.stock != null && b.stock !== '' && Number.isFinite(Number(b.stock))) ? Math.max(0, Math.round(Number(b.stock))) : null;
+    // Gallery photos: array of short URLs. null (field absent) = leave the
+    // stored gallery untouched; [] = owner cleared it. data: URLs never fit here.
+    const gallery = Array.isArray(b.images)
+      ? JSON.stringify([...new Set(b.images.map(u => String(u || '').trim())
+          .filter(u => u && !u.startsWith('data:') && u.length <= 400))].slice(0, 12))
+      : null;
     await pool.query(
-      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams, stock_qty)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8, weight_grams=$9, stock_qty=$10`,
+      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams, stock_qty, gallery)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::jsonb,'[]'::jsonb))
+       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8, weight_grams=$9, stock_qty=$10, gallery=COALESCE($11::jsonb, products.gallery)`,
       [id, name, category, price, Number.isFinite(Number(b.originalPrice)) ? Number(b.originalPrice) : null,
-        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams, stockQty]
+        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams, stockQty, gallery]
     );
     clearProductsCache();
     res.json({ ok: true, id });
@@ -2473,6 +2482,10 @@ app.post('/api/orders/:id/utr', orderLimiter, async (req, res) => {
       const lo = mem.orders.find(x => x.id === orderId);
       if (lo) { lo.utr = utr; lo.utr_submitted_at = new Date().toISOString(); }
     }
+    // Respond NOW — the customer's "Confirm Order" button is blocked waiting on
+    // this request. The owner re-notify below runs after the response is sent
+    // (the WhatsApp Cloud API can take up to 8s and used to freeze the button).
+    res.json({ ok: true, message: 'UTR submitted. The store will verify your payment shortly.' });
     // Re-notify owner with the UTR so they can verify immediately.
     try {
       const updated = await getOrderById(orderId);
@@ -2513,10 +2526,9 @@ ${items || '—'}
         }
       }
     } catch (e) { console.error('owner utr notify bg:', e.message); }
-    res.json({ ok: true, message: 'UTR submitted. The store will verify your payment shortly.' });
   } catch (e) {
     console.error('utr submit:', e.message);
-    res.status(500).json({ error: 'Could not submit UTR' });
+    if (!res.headersSent) res.status(500).json({ error: 'Could not submit UTR' });
   }
 });
 
