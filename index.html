@@ -77,6 +77,8 @@
           // Prefer the server's value when it's set — that way the owner only
           // has to configure GOOGLE_CLIENT_ID in Railway (no HTML re-deploy).
           if (d && d.googleClientId) TC_CONFIG.googleClientId = d.googleClientId;
+          // Re-paint anything that renders payment-policy text (COD vs UPI-only).
+          if (window.__onServerConfig) window.__onServerConfig();
         }
       } catch(e) { /* keep safe defaults */ }
       // Owner-uploaded photos (hero/banner/category) saved on the server —
@@ -1447,6 +1449,7 @@
           <button class="ad-tab active" data-tab="products">🛍 Products</button>
           <button class="ad-tab" data-tab="orders">📦 Orders</button>
           <button class="ad-tab" data-tab="coupons">🏷 Coupons</button>
+          <button class="ad-tab" data-tab="reviews">⭐ Reviews</button>
           <button class="ad-tab" data-tab="site">🖼 Site &amp; Photos</button>
         </div>
         <div class="ad-body" id="adBody"></div>
@@ -1659,17 +1662,42 @@
     animateStats();
   }
 
-  /* Merge server-saved photos (hero/banner/category) into the live storefront.
-     Called from loadServerConfig() at boot so every visitor sees the owner's
-     uploaded photos without any file download or redeploy. */
+  /* Merge ALL server-saved settings (photos, texts, contact, shipping, category
+     tiles, testimonials) into the live storefront. Called from loadServerConfig()
+     at boot so every visitor sees the owner's panel edits — no redeploy needed. */
   window.__applySiteSettings = function(settings){
     const s = S();
-    if (settings.heroImg){ s.heroImg = settings.heroImg; const h=$("#heroImg"); if(h) h.src = settings.heroImg; }
-    if (settings.bannerImg){ s.bannerImg = settings.bannerImg; const b=$("#bannerImg"); if(b) b.src = settings.bannerImg; }
+    // Scalar keys: copy every non-empty saved string straight into settings.
+    // (upiId/payeeName never come from the server — payment target stays file-baked.)
+    Object.keys(settings).forEach(k=>{
+      if (k === "cats" || k === "tests" || k === "upiId" || k === "payeeName") return;
+      if (typeof settings[k] === "string" && settings[k] !== "") s[k] = settings[k];
+    });
+    // Category tiles: merge saved names/images onto the local tiles.
     if (Array.isArray(s.cats)){
       s.cats.forEach((c,i)=>{ if (settings["cat"+i+"Img"]) c.img = settings["cat"+i+"Img"]; });
+      if (Array.isArray(settings.cats)){
+        settings.cats.forEach((sc,i)=>{
+          if (!s.cats[i]) return;
+          if (sc && sc.name) s.cats[i].name = sc.name;
+          if (sc && sc.img) s.cats[i].img = sc.img;
+        });
+      }
       if (typeof renderCats === "function") renderCats();
     }
+    // Testimonials: server copy wins when present.
+    if (Array.isArray(settings.tests) && settings.tests.length && Array.isArray(s.tests)){
+      settings.tests.forEach((st,i)=>{ if (s.tests[i] && st){ if (st.q) s.tests[i].q = st.q; if (st.who) s.tests[i].who = st.who; if (st.meta != null) s.tests[i].meta = st.meta; } });
+      if (typeof renderTests === "function") renderTests();
+    }
+    if (typeof applySettings === "function") applySettings();
+  };
+
+  /* Re-render payment-policy text once /api/config arrives (COD on/off). */
+  window.__onServerConfig = function(){
+    if (typeof renderGrids === "function") renderGrids();
+    const pm = document.getElementById("prodModal");
+    if (pm && pm.classList.contains("open") && typeof renderProduct === "function") renderProduct();
   };
 
   function animateStats(){
@@ -1729,7 +1757,7 @@
       + starsHTML(p)
       + '<div class="pprice"><span class="now">'+inr(p.price)+'</span>'
       + (p.was ? '<span class="was">'+inr(p.was)+'</span><span class="off">'+off+'% off</span>' : '')
-      + '</div><div class="pfoot"><span class="cod">COD Available</span>'
+      + '</div><div class="pfoot"><span class="cod">'+(SERVER_CFG.allowCod ? "COD Available" : "Secure UPI Pay")+'</span>'
       + '<button class="addbtn" data-add="'+esc(p.id)+'">Add +</button></div></div></article>';
   }
 
@@ -1895,20 +1923,23 @@
           cat: db.category || rp.cat || "utility",
           price: Number.isFinite(Number(db.price)) ? Number(db.price) : (rp.price||0),
           was: (db.originalPrice!=null && Number.isFinite(Number(db.originalPrice))) ? Number(db.originalPrice) : (rp.was!=null?rp.was:null),
-          spec: rp.spec || String(db.description||"").slice(0,70),
+          // Server value wins — it's what the owner last saved from the panel
+          // (the local rp.spec is only the fallback for offline/file:// mode).
+          spec: String(db.description||"").slice(0,70) || rp.spec || "",
           weightGrams: (db.weightGrams != null && Number.isFinite(Number(db.weightGrams))) ? Number(db.weightGrams) : (rp.weightGrams != null ? rp.weightGrams : 100),
           weight: (db.weight != null && Number.isFinite(Number(db.weight))) ? Number(db.weight) : (rp.weight != null ? rp.weight : 0.1),
+          stock: (db.stock != null && Number.isFinite(Number(db.stock))) ? Number(db.stock) : null,
           img: rp.img && String(rp.img).startsWith("data:") ? rp.img : (dbImg || rp.img || PLC),
           // Gallery: server copy wins (it's what every visitor sees); fall back
           // to the local rich copy so device-only (data:) photos still show for the owner.
           images: (Array.isArray(db.images) && db.images.length)
             ? db.images.filter(u => u && String(u).length <= 500)
             : (Array.isArray(rp.images) ? rp.images : []),
-          badge: rp.badge || "",
-          feat: !!rp.feat,
+          badge: db.badge != null ? db.badge : (rp.badge || ""),
+          feat: db.feat != null ? !!db.feat : !!rp.feat,
           // Out-of-stock should SHOW with an "Out of Stock" badge (disabled add
           // button), not vanish. Only hide when the owner explicitly hides it.
-          hide: !!rp.hide,
+          hide: db.hidden != null ? !!db.hidden : !!rp.hide,
           oos: db.inStock === false
         };
       });
@@ -3495,7 +3526,8 @@
           +   '<label>📸 Gallery <small style="text-transform:none;letter-spacing:0;font-weight:400">— click × to remove a photo</small></label>'
           +   '<div class="ad-extras">'+galleryHTML+'</div>'
           + '</div>'
-          + '<div class="ad-row2"><div><label>Badge</label><select data-f="badge">'+BADGES.map(b=>'<option value="'+b+'"'+(b===(p.badge||"")?" selected":"")+'>'+(b||"— none —")+'</option>').join("")+'</select></div><div></div></div>'
+          + '<div class="ad-row2"><div><label>Badge</label><select data-f="badge">'+BADGES.map(b=>'<option value="'+b+'"'+(b===(p.badge||"")?" selected":"")+'>'+(b||"— none —")+'</option>').join("")+'</select></div>'
+          + '<div><label>Stock qty (blank = don\'t track)</label><input data-f="stock" type="number" min="0" placeholder="e.g. 10" value="'+(p.stock!=null && Number.isFinite(Number(p.stock)) ? esc(String(p.stock)) : "")+'"></div></div>'
           + '<label>Short detail line</label><input data-f="spec" value="'+esc(p.spec||"")+'">'
           + '<div class="ad-flags">'
           + '<label><input type="checkbox" data-f="feat"'+(p.feat?" checked":"")+'> Show in Trending</label>'
@@ -3511,6 +3543,8 @@
       renderAdminOrders(body);
     } else if (ADMIN.tab === "coupons"){
       renderAdminCoupons(body);
+    } else if (ADMIN.tab === "reviews"){
+      renderAdminReviews(body);
     } else {
       const s = S();
       const imgRow = (label, key, cur) =>
@@ -3543,6 +3577,57 @@
         + '<div class="ad-sec"><h4>📞 Contact & Brand</h4>' + txt("Brand word 1","brand1") + txt("Brand word 2 (golden)","brand2") + txt("Brand sub-line","sub") + txt("Top strip text","strip") + txt("Phone (display)","phone") + txt("WhatsApp number (digits only, 91…)","wa") + txt("Instagram username","insta") + txt("Footer paragraph","footBlurb",true) + '</div>'
         + '<div class="ad-sec"><h4>💳 Payment — UPI &amp; Cash only</h4>' + txt("UPI ID (QR will be generated from this)","upiId") + txt("Payee name (shown on UPI)","payeeName") + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.6">Cards are <b>off</b> — only <b>UPI</b> and <b>Cash on Delivery</b>. Customer pays via QR / "Pay in UPI app" and enters the <b>UTR number</b>, then the order is confirmed (UTR comes via WhatsApp).</div></div>'
         + '<div class="ad-sec"><h4>🚚 Orders &amp; Delivery</h4><div class="ad-row2"><div>' + txt("Minimum order ₹","minOrder") + '</div><div>' + txt("Shipping fee ₹","shippingFee") + '</div></div>' + txt("Free delivery above ₹ (0 = always charge)","freeShipAbove") + txt("Delhivery Warehouse Name (exact registered name from your Delhivery One portal, e.g. Tish Creations or Roorkee)","delhiveryWarehouse") + txt("GST / price note (shown in cart)","gstNote") + '<div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.6">New model: orders <b>₹1000+</b> get <b>FREE</b> shipping (UPI or COD). Below that, small 1–2 item orders also work — customer\'s <b>pincode</b> at checkout gets the exact rate from your <b>Delhivery API</b> (if API is not set, the flat fee above is used as fallback). Minimum order is now <b>0</b> — you can increase it here if needed.</div></div>';
+    }
+  }
+
+  /* ---------- ADMIN: Review moderation ---------- */
+  async function renderAdminReviews(body){
+    if (!ADMIN.server){
+      body.innerHTML = '<div class="ad-empty">⭐ Review moderation needs the server connection.</div>';
+      return;
+    }
+    body.innerHTML = '<div class="ad-empty">Loading reviews…</div>';
+    try {
+      const r = await fetch(TC_CONFIG.backendUrl + "/api/admin/reviews", { credentials:"include" });
+      if (!r.ok) throw new Error("auth");
+      const d = await r.json();
+      const reviews = d.reviews || [];
+      if (!reviews.length){ body.innerHTML = '<div class="ad-empty">No customer reviews yet. When customers write one, approve it here and it appears on the product page. 🌸</div>'; return; }
+      const pending = reviews.filter(rv=>!rv.approved).length;
+      body.innerHTML = '<div style="margin-bottom:12px;font-size:13px;color:var(--muted)">'
+        + (pending ? '<b style="color:var(--gold-dark)">'+pending+' waiting for approval</b> — approved reviews show on the product page for all customers.' : 'All reviews handled ✔')
+        + '</div>'
+        + reviews.map(rv=>{
+          const p = DATA.products.find(x=>x.id===rv.product_id);
+          const stars = "★".repeat(rv.rating) + "☆".repeat(5-rv.rating);
+          const dt = rv.created_at ? new Date(rv.created_at).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "";
+          return '<div class="ad-sec" data-rvid="'+rv.id+'" style="'+(rv.approved?'':'border-left:3px solid var(--gold);')+'">'
+            + '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+            + '<div><b>'+esc(p ? p.name : rv.product_id)+'</b><br><span style="color:var(--gold-dark)">'+stars+'</span> · '+esc(rv.customer_name||"Customer")+' · <span style="color:var(--muted);font-size:12px">'+dt+'</span>'
+            + (rv.approved ? ' · <span style="color:#3E7C4F;font-weight:700;font-size:12px">LIVE ✔</span>' : ' · <span style="color:#B8860B;font-weight:700;font-size:12px">PENDING</span>') + '</div>'
+            + '<div style="display:flex;gap:8px">'
+            + (rv.approved
+                ? '<button class="ad-btn ghost" data-rvact="unapprove">Hide</button>'
+                : '<button class="ad-btn" data-rvact="approve">✔ Approve</button>')
+            + '<button class="ad-del" data-rvact="delete">🗑</button>'
+            + '</div></div>'
+            + (rv.body ? '<p style="margin:10px 0 0;font-size:13.5px;line-height:1.6">'+esc(rv.body)+'</p>' : '')
+            + '</div>';
+        }).join("");
+      body.querySelectorAll("[data-rvact]").forEach(btn=>btn.addEventListener("click", async ()=>{
+        const card = btn.closest("[data-rvid]"); const id = card.dataset.rvid; const act = btn.dataset.rvact;
+        if (act === "delete" && !confirm("Delete this review permanently?")) return;
+        btn.disabled = true;
+        try {
+          const resp = act === "delete"
+            ? await fetch(TC_CONFIG.backendUrl + "/api/admin/reviews/" + encodeURIComponent(id), { method:"DELETE", credentials:"include" })
+            : await fetch(TC_CONFIG.backendUrl + "/api/admin/reviews/" + encodeURIComponent(id), { method:"PATCH", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify({ approved: act === "approve" }) });
+          if (resp.ok){ toast(act==="approve" ? "✔ Review is now live on the site" : act==="delete" ? "🗑 Review deleted" : "Review hidden"); renderAdminReviews(body); }
+          else { toast("Could not update review"); btn.disabled = false; }
+        } catch(e){ toast("Network error"); btn.disabled = false; }
+      }));
+    } catch(e){
+      body.innerHTML = '<div class="ad-empty">Could not load reviews — please check the server connection.</div>';
     }
   }
 
@@ -3699,6 +3784,7 @@
       if (f==="price") p.price = Number(t.value)||0;
       else if (f==="was") p.was = t.value==="" ? null : (Number(t.value)||null);
       else if (f==="weightGrams") p.weightGrams = Number(t.value)||100;
+      else if (f==="stock") p.stock = t.value==="" ? null : Math.max(0, Math.round(Number(t.value)||0));
       else if (f==="feat" || f==="hide") p[f] = t.checked;
       else if (f==="img"){ if (t.value.trim()) { p.img = t.value.trim(); card.querySelector(".ad-thumb img").src = p.img; } }
       else if (f==="images"){ p.images = t.value.split(/\n+/).map(u=>u.trim()).filter(Boolean); }
@@ -3726,8 +3812,18 @@
   });
   $("#adBody").addEventListener("change", async e=>{
     $("#adBody").dispatchEvent(new Event("noop")); e.target.dispatchEvent(new Event("input",{bubbles:true}));
-    if (e.target.dataset.sk) {
-      try { await fetch(TC_CONFIG.backendUrl + "/api/site-settings", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify({ [e.target.dataset.sk]: e.target.value }) }); } catch(err){}
+    const t = e.target;
+    const postSettings = async body => {
+      try { await fetch(TC_CONFIG.backendUrl + "/api/site-settings", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify(body) }); } catch(err){}
+    };
+    if (t.dataset.sk) { await postSettings({ [t.dataset.sk]: t.value }); }
+    // Category tile edits (name / typed image URL) → sync the whole tiles array.
+    else if (t.dataset.ci != null && t.dataset.cf) {
+      await postSettings({ cats: (S().cats||[]).map(c=>({ name:c.name||"", img:(c.img && !String(c.img).startsWith("data:")) ? c.img : "" })) });
+    }
+    // Testimonial edits → sync the whole testimonials array.
+    else if (t.dataset.ti != null && t.dataset.tf) {
+      await postSettings({ tests: (S().tests||[]).map(x=>({ q:x.q||"", who:x.who||"", meta:x.meta||"" })) });
     }
   });
 
@@ -3812,6 +3908,7 @@
         try {
           await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
             body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:p.img,
+              badge:p.badge||"", feat:!!p.feat, hidden:!!p.hide, stock:p.stock,
               images: (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:")).slice(0,12) }) });
         } catch(e){}
       });
@@ -3839,6 +3936,7 @@
       try {
         await fetch(TC_CONFIG.backendUrl + "/api/products", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include",
           body: JSON.stringify({ id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100, image:p.img,
+            badge:p.badge||"", feat:!!p.feat, hidden:!!p.hide, stock:p.stock,
             images: (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:")).slice(0,12) }) });
       } catch(e){}
       return;
@@ -3847,9 +3945,19 @@
     if (del){
       const card = del.closest("[data-pid]");
       const p = DATA.products.find(x=>x.id===card.dataset.pid); if(!p) return;
-      if (!confirm('"'+p.name+'" — delete this?\n(For server products, "Hide" is better — delete only removes from this file/device.)')) return;
+      if (!confirm('"'+p.name+'" — delete this product from the live site?\nThis removes it for all customers. (Past orders are not affected.)')) return;
       DATA.products = DATA.products.filter(x=>x.id!==p.id);
-      renderAdminTab(); renderFilters(); renderGrids(); refreshWishUI(); toast("🗑 Deleted");
+      renderAdminTab(); renderFilters(); renderGrids(); refreshWishUI();
+      // Delete on the server too — otherwise it comes back on the next sync.
+      if (TC_CONFIG.apiEnabled && ADMIN.authed){
+        try {
+          const r = await fetch(TC_CONFIG.backendUrl + "/api/products/" + encodeURIComponent(p.id), { method:"DELETE", credentials:"include" });
+          if (r.ok) toast("🗑 Deleted from the live site");
+          else toast("⚠️ Removed here, but the server said no — it may return on reload");
+        } catch(err){ toast("⚠️ Removed here, but the server couldn't be reached — it may return on reload"); }
+      } else {
+        toast("🗑 Deleted (this device only — server not connected)");
+      }
       return;
     }
     const sup = e.target.closest("[data-supimg]");
@@ -3951,7 +4059,8 @@
     if (!ADMIN.authed) return toast("Please log in as owner first");
     let ok = 0, skippedImg = 0;
     for (const p of DATA.products){
-      const body = { id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100 };
+      const body = { id:p.id, name:p.name, price:p.price, category:p.cat, originalPrice:p.was, inStock:!p.hide, description:p.spec||"", weightGrams: Number(p.weightGrams)||100,
+        badge:p.badge||"", feat:!!p.feat, hidden:!!p.hide, stock:p.stock };
       if (p.img && !String(p.img).startsWith("data:") && String(p.img).length<=500) body.image = p.img; else if (p.img) skippedImg++;
       body.images = (p.images||[]).filter(u => u && u !== p.img && !String(u).startsWith("data:") && String(u).length<=500).slice(0,12);
       try {
@@ -4069,7 +4178,7 @@
       +   '<div class="pd-price-row"><span class="pd-price">'+inr(p.price)+'</span>'
       +     (p.was ? '<span class="pd-was">'+inr(p.was)+'</span><span class="pd-save">Save '+inr(save)+' ('+off+'% off)</span>' : '')
       +   '</div>'
-      +   '<div class="pd-tax">Inclusive of all taxes · UPI &amp; Cash on Delivery</div>'
+      +   '<div class="pd-tax">Inclusive of all taxes · '+(SERVER_CFG.allowCod ? "UPI &amp; Cash on Delivery" : "UPI / Online payment")+'</div>'
       +   '<p class="pd-desc">'+esc(desc)+'</p>'
       +   '<div class="pd-specs">'
       +     '<div class="pd-spec"><div class="k">Category</div><div class="v">'+esc(catLabel(p.cat))+'</div></div>'
@@ -4327,7 +4436,7 @@
       +'<h3>Do you offer Cash on Delivery (COD)?</h3><p>Yes! We accept <b>COD</b> as well as <b>UPI</b> (any app — GPay, PhonePe, Paytm). Just choose your preferred method at checkout.</p>'
       +'<h3>What are the shipping charges?</h3><p>Shipping is <b>FREE on orders ₹1,000+</b>. Below that, the exact courier charge is calculated live from your pincode at checkout.</p>'
       +'<h3>Can I return or exchange an item?</h3><p>Yes, within <b>7 days</b> of delivery for unused items in original packaging. See our <a href="#" data-policy="returns">Return &amp; Refund Policy</a> for details. Custom/personalised items are non-returnable.</p>'
-      +'<h3>Do I need an account to order?</h3><p>Yes — creating an account is quick, free, and secure! It allows you to check out faster with saved addresses, track your live order status anytime, and sync your wishlist across all devices.</p>'
+      +'<h3>Do I need an account to order?</h3><p>Yes — creating an account is quick, free, and secure! It allows you to check out faster with saved addresses and track your live order status anytime. (Your wishlist is saved in this browser on this device.)</p>'
       +'<h3>How do I track my order?</h3><p>Use the tracking link sent to you on WhatsApp/email, or log in and view <b>Order History</b> in your account.</p>'
       +'<h3>Are the products genuine / good quality?</h3><p>Every piece is <b>hand-checked</b> before dispatch and packed gift-ready. If anything arrives damaged, WhatsApp us a photo within 48 hours and we\'ll make it right.</p>'
       +'<h3>Still have a question?</h3><p>Message us any time on WhatsApp at <b><a href="https://wa.me/919837229280" target="_blank" rel="noopener">+91 98372 29280</a></b> — we reply 7 days a week. 🌸</p>' },

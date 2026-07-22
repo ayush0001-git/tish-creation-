@@ -891,6 +891,12 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_qty INTEGER;
 -- Extra product photos (the gallery). Main photo stays in image_url; this holds
 -- the rest as a JSON array of short /api/img/... URLs.
 ALTER TABLE products ADD COLUMN IF NOT EXISTS gallery JSONB;
+-- Owner-panel fields that previously lived only in the HTML file: badge label
+-- ("Bestseller" etc.), Trending tick, and true hide-from-site (distinct from
+-- in_stock, which shows an Out of Stock badge instead of hiding).
+ALTER TABLE products ADD COLUMN IF NOT EXISTS badge TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS feat BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ DEFAULT now();
@@ -1047,6 +1053,7 @@ async function getProducts() {
   const { rows } = await pool.query(
     `SELECT id, title AS name, category, base_price AS price, original_price AS "originalPrice",
             image_url AS image, COALESCE(gallery, '[]'::jsonb) AS images, in_stock AS "inStock", description,
+            badge, feat, hidden,
             weight_grams AS "weightGrams", COALESCE(weight_grams, 100)::numeric / 1000.0 AS weight,
             stock_qty AS "stock"
        FROM products ORDER BY created_at DESC`
@@ -2040,16 +2047,36 @@ app.post('/api/products', requireAdmin, async (req, res) => {
       ? JSON.stringify([...new Set(b.images.map(u => String(u || '').trim())
           .filter(u => u && !u.startsWith('data:') && u.length <= 400))].slice(0, 12))
       : null;
+    // Badge / Trending / Hide — same null-means-keep semantics as gallery, so a
+    // request that omits a field never wipes what's already stored.
+    const badge = b.badge != null ? String(b.badge).slice(0, 40) : null;
+    const feat = b.feat != null ? !!b.feat : null;
+    const hidden = b.hidden != null ? !!b.hidden : null;
     await pool.query(
-      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams, stock_qty, gallery)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::jsonb,'[]'::jsonb))
-       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8, weight_grams=$9, stock_qty=$10, gallery=COALESCE($11::jsonb, products.gallery)`,
+      `INSERT INTO products (id, title, category, base_price, original_price, image_url, in_stock, description, weight_grams, stock_qty, gallery, badge, feat, hidden)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::jsonb,'[]'::jsonb),COALESCE($12,''),COALESCE($13::boolean,FALSE),COALESCE($14::boolean,FALSE))
+       ON CONFLICT (id) DO UPDATE SET title=$2, category=$3, base_price=$4, original_price=$5, image_url=$6, in_stock=$7, description=$8, weight_grams=$9, stock_qty=$10,
+         gallery=COALESCE($11::jsonb, products.gallery), badge=COALESCE($12, products.badge),
+         feat=COALESCE($13::boolean, products.feat), hidden=COALESCE($14::boolean, products.hidden)`,
       [id, name, category, price, Number.isFinite(Number(b.originalPrice)) ? Number(b.originalPrice) : null,
-        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams, stockQty, gallery]
+        b.image ? String(b.image).slice(0, 400) : null, b.inStock !== false, String(b.description || '').slice(0, 2000), weightGrams, stockQty, gallery, badge, feat, hidden]
     );
     clearProductsCache();
     res.json({ ok: true, id });
   } catch (e) { console.error('save product:', e.message); res.status(500).json({ error: 'Could not save product' }); }
+});
+
+// Owner deletes a product for real. Past orders keep their line items
+// (order_items.product_id has no FK); the product's reviews cascade-delete.
+app.delete('/api/products/:id', requireAdmin, async (req, res) => {
+  const id = String(req.params.id || '').trim().slice(0, 60);
+  if (!id) return res.status(400).json({ error: 'Product id required' });
+  if (!pool) return res.json({ ok: true, note: 'Demo mode: connect a database to persist deletions.' });
+  try {
+    await pool.query('DELETE FROM products WHERE id=$1', [id]);
+    clearProductsCache();
+    res.json({ ok: true });
+  } catch (e) { console.error('delete product:', e.message); res.status(500).json({ error: 'Could not delete product' }); }
 });
 
 /* ===========================================================================
@@ -2106,10 +2133,34 @@ app.post('/api/site-settings', requireAdmin, async (req, res) => {
   try {
     if (!pool) return res.status(503).json({ error: 'Settings need the database (not available in demo mode).' });
     const patch = (req.body && typeof req.body === 'object') ? req.body : {};
-    // Whitelist: only known image-ish keys, each a short string (URL).
+    // Whitelist of owner-editable settings — everything the panel's Site tab
+    // can edit, so panel edits reach every visitor live. (upiId/payeeName are
+    // deliberately NOT synced: the payment destination only changes via a
+    // deliberate file redeploy, never a stray panel edit.)
+    const TEXT_KEYS = [
+      'heroImg','bannerImg','cat0Img','cat1Img','cat2Img','cat3Img','cat4Img','cat5Img','cat6Img','cat7Img',
+      'delhiveryWarehouse','strip','brand1','brand2','sub','badge','h1a','h1b','h1em',
+      'ratingBig','ratingSmall','stat1n','stat1l','stat2n','stat2l','stat3n','stat3l',
+      'bannerH','bannerEm','phone','wa','insta','minOrder','freeShipAbove','shippingFee','gstNote'
+    ];
+    const LONG_KEYS = ['lead','footBlurb','bannerP'];
     const clean = {};
-    for (const k of ['heroImg', 'bannerImg', 'cat0Img', 'cat1Img', 'cat2Img', 'cat3Img', 'cat4Img', 'cat5Img', 'delhiveryWarehouse']) {
-      if (typeof patch[k] === 'string' && patch[k].length <= 400) clean[k] = patch[k];
+    for (const k of TEXT_KEYS) { if (typeof patch[k] === 'string' && patch[k].length <= 400) clean[k] = patch[k]; }
+    for (const k of LONG_KEYS) { if (typeof patch[k] === 'string' && patch[k].length <= 2000) clean[k] = patch[k]; }
+    // Category tiles (name + image) and testimonial cards come as whole arrays.
+    // data: image URLs are dropped (megabytes — they stay device-local).
+    if (Array.isArray(patch.cats)) {
+      clean.cats = patch.cats.slice(0, 12).map(c => ({
+        name: String((c && c.name) || '').slice(0, 60),
+        img: (typeof (c && c.img) === 'string' && !c.img.startsWith('data:') && c.img.length <= 400) ? c.img : ''
+      }));
+    }
+    if (Array.isArray(patch.tests)) {
+      clean.tests = patch.tests.slice(0, 12).map(t => ({
+        q: String((t && t.q) || '').slice(0, 500),
+        who: String((t && t.who) || '').slice(0, 80),
+        meta: String((t && t.meta) || '').slice(0, 80)
+      }));
     }
     await pool.query(
       `INSERT INTO site_settings (id, data, updated_at) VALUES (1, $1::jsonb, now())
@@ -3652,6 +3703,17 @@ app.patch('/api/admin/reviews/:id', requireAdmin, async (req, res) => {
     if (!rows[0]) return res.status(404).json({ error: 'Review not found' });
     res.json({ ok: true, review: rows[0] });
   } catch (e) { console.error('update review:', e.message); res.status(500).json({ error: 'Could not update review' }); }
+});
+
+// Owner rejects a review permanently (spam / abusive / test reviews).
+app.delete('/api/admin/reviews/:id', requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  if (!pool) return res.json({ ok: true });
+  try {
+    await pool.query('DELETE FROM reviews WHERE id=$1', [id]);
+    res.json({ ok: true });
+  } catch (e) { console.error('delete review:', e.message); res.status(500).json({ error: 'Could not delete review' }); }
 });
 
 // ---- Admin CSV export (orders) ----
